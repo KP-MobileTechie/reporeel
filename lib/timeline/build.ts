@@ -298,28 +298,11 @@ function aggregate(
     }
   }
 
-  // Remap supernovas.
+  // Remap supernovas: removed ids are routed to their dir's meta-star via remapId.
   for (const sn of supernovas) {
     const remapped: number[] = [];
     const seen = new Set<number>();
     for (const oldId of sn.starIds) {
-      if (removeIds.has(oldId)) {
-        // Map removed id → its dir's meta-star.
-        const dIdx = starDirs[idRemap[
-          // We need the metaId for this dir. Find it via the mergeGroup.
-          // starDirs was already compacted; use the raw dirGroups to find metaId.
-          // Since stars array is already mutated, find by checking mergeGroups.
-          // Easier: rebuild the meta-star new id from metaStarForDir.
-          (() => {
-            for (const [dIdx, mId] of metaStarForDir) {
-              const mergeGroup = mergeGroups.find((g) => g.dirIdx === dIdx);
-              if (mergeGroup && mergeGroup.ids.includes(oldId)) return mId;
-            }
-            return oldId;
-          })()
-        ]];
-        void dIdx; // unused, we'll use a cleaner approach below
-      }
       const newMappedId = remapId(oldId, removeIds, metaStarForDir, mergeGroups, idRemap);
       if (newMappedId !== -1 && !seen.has(newMappedId)) {
         remapped.push(newMappedId);
