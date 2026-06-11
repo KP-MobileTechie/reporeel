@@ -338,5 +338,6 @@ function remapId(
       return idRemap[metaOldId];
     }
   }
-  return idRemap[oldId]; // fallback (should not happen)
+  // No merge group found — this is an invariant violation.
+  throw new Error("buildTimeline: unmapped star id after aggregation");
 }

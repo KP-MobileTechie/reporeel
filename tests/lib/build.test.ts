@@ -296,6 +296,31 @@ describe("buildTimeline – rename", () => {
     const newDirIdx = tl.dirs.indexOf("new");
     expect(tl.starDirs[0]).toBe(newDirIdx);
   });
+
+  it("rename updates lang: a/file.ts -> a/file.css keeps same star id and lang becomes css", () => {
+    const tl = buildTimeline(
+      makeTimeline([
+        {
+          hash: "a",
+          author: "f",
+          date: 1000,
+          message: "add",
+          changes: [{ path: "a/file.ts", type: "add", delta: 10 }],
+        },
+        {
+          hash: "b",
+          author: "f",
+          date: 2000,
+          message: "rename to css",
+          changes: [{ path: "a/file.ts", type: "rename", delta: 0, toPath: "a/file.css" }],
+        },
+      ]),
+    );
+    expect(tl.stars).toHaveLength(1);
+    expect(tl.stars[0].id).toBe(0);
+    expect(tl.stars[0].path).toBe("a/file.css");
+    expect(tl.stars[0].lang).toBe("css");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -600,6 +625,51 @@ describe("buildTimeline – aggregation", () => {
         expect(id).toBeGreaterThanOrEqual(0);
         expect(id).toBeLessThan(tl.stars.length);
       }
+    }
+  }, 30_000);
+
+  // Helper: builds the standard 16k-file aggregation fixture once.
+  function make16kTimeline() {
+    const TOTAL = 16_000;
+    const DIR_COUNT = 100;
+    const commits: CommitTimeline["commits"] = [];
+    for (let i = 0; i < TOTAL; i++) {
+      const dir = `dir${i % DIR_COUNT}`;
+      commits.push({
+        hash: `h${i}`,
+        author: "bot",
+        date: i + 1,
+        message: `add ${i}`,
+        changes: [{ path: `${dir}/file${i}.ts`, type: "add", delta: 1 }],
+      });
+    }
+    return buildTimeline(makeTimeline(commits));
+  }
+
+  it("every comet hop has 0 <= hop.starId < stars.length after aggregation", () => {
+    const tl = make16kTimeline();
+    for (const comet of tl.comets) {
+      for (const hop of comet.hops) {
+        expect(hop.starId).toBeGreaterThanOrEqual(0);
+        expect(hop.starId).toBeLessThan(tl.stars.length);
+      }
+    }
+  }, 30_000);
+
+  it("at least one meta-star path matches /+N files/ and starts with its directory after aggregation", () => {
+    const tl = make16kTimeline();
+    const metaStars = tl.stars.filter((s) => /\/\+\d+ files$/.test(s.path));
+    expect(metaStars.length).toBeGreaterThan(0);
+    for (const s of metaStars) {
+      const dirPart = s.path.replace(/\/\+\d+ files$/, "");
+      expect(s.path.startsWith(dirPart)).toBe(true);
+    }
+  }, 30_000);
+
+  it("stars[i].id === i for every i after aggregation (dense re-indexing)", () => {
+    const tl = make16kTimeline();
+    for (let i = 0; i < tl.stars.length; i++) {
+      expect(tl.stars[i].id).toBe(i);
     }
   }, 30_000);
 });
