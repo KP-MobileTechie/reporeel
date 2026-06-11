@@ -103,10 +103,15 @@ export function buildTimeline(input: CommitTimeline): Timeline {
         }
         // Renames typically have delta=0; we still accumulate if nonzero.
         if (delta !== 0) {
-          const id = liveMap.get(toPath)!;
-          const prev = stars[id].sizeByTime;
+          const renameId = liveMap.get(toPath)!;
+          const prev = stars[renameId].sizeByTime;
           const prevCum = prev.length > 0 ? prev[prev.length - 1][1] : 0;
-          prev.push([date, prevCum + Math.abs(delta)]);
+          const newCum = prevCum + Math.abs(delta);
+          if (prev.length > 0 && prev[prev.length - 1][0] === date) {
+            prev[prev.length - 1][1] = newCum;
+          } else {
+            prev.push([date, newCum]);
+          }
         }
         continue;
       }
@@ -115,7 +120,12 @@ export function buildTimeline(input: CommitTimeline): Timeline {
       const id = getOrCreateStar(path, date);
       const prev = stars[id].sizeByTime;
       const prevCum = prev.length > 0 ? prev[prev.length - 1][1] : 0;
-      prev.push([date, prevCum + Math.abs(delta)]);
+      const newCum = prevCum + Math.abs(delta);
+      if (prev.length > 0 && prev[prev.length - 1][0] === date) {
+        prev[prev.length - 1][1] = newCum;
+      } else {
+        prev.push([date, newCum]);
+      }
       if (!seenInCommit.has(id)) { touchedIds.push(id); seenInCommit.add(id); }
     }
 
@@ -184,6 +194,8 @@ function aggregate(
   // We'll build a "remove set" of ids to merge and track the meta-star per dir.
   const metaStarForDir = new Map<number, number>(); // dirIdx → meta-star id (old id of the meta-star placeholder)
   const mergeGroups: { dirIdx: number; ids: number[] }[] = []; // ids to merge per dir
+  // metaRemap: removed old id → meta-star's old id (for O(1) remapId lookup)
+  const metaRemap = new Map<number, number>();
 
   for (const [dirIdx, ids] of dirsBySize) {
     if (eliminated >= excess) break;
@@ -201,6 +213,12 @@ function aggregate(
     const mergeIds = ids.slice(0, toMerge);
     mergeGroups.push({ dirIdx, ids: mergeIds });
     eliminated += toMerge - 1;
+
+    // Populate metaRemap: removed ids (indices 1..toMerge-1) → metaId (ids[0])
+    const metaId = mergeIds[0];
+    for (let i = 1; i < mergeIds.length; i++) {
+      metaRemap.set(mergeIds[i], metaId);
+    }
   }
 
   if (mergeGroups.length === 0) return;
@@ -271,39 +289,42 @@ function aggregate(
 
   // --- Re-index: remove absorbed stars, compact the array, remap all ids. ---
   // new id for each old id; -1 = removed.
-  const idRemap = new Int32Array(stars.length).fill(-1);
+  const originalLen = stars.length;
+  const idRemap = new Int32Array(originalLen).fill(-1);
   let newId = 0;
   // Iterate in original order to preserve stable ordering.
-  for (let oldId = 0; oldId < stars.length; oldId++) {
+  for (let oldId = 0; oldId < originalLen; oldId++) {
     if (!removeIds.has(oldId)) {
       idRemap[oldId] = newId++;
     }
   }
 
-  // Compact stars array in place.
-  for (let oldId = stars.length - 1; oldId >= 0; oldId--) {
-    if (removeIds.has(oldId)) {
-      stars.splice(oldId, 1);
+  // Linear compaction: single forward pass, no splice.
+  let writeIdx = 0;
+  for (let oldId = 0; oldId < originalLen; oldId++) {
+    if (!removeIds.has(oldId)) {
+      stars[writeIdx] = stars[oldId];
+      stars[writeIdx].id = writeIdx;
+      writeIdx++;
     }
   }
-  // Fix star.id to match new position.
-  for (let i = 0; i < stars.length; i++) {
-    stars[i].id = i;
-  }
+  stars.length = writeIdx;
 
-  // Compact starDirs.
-  for (let oldId = starDirs.length - 1; oldId >= 0; oldId--) {
-    if (removeIds.has(oldId)) {
-      starDirs.splice(oldId, 1);
+  // Compact starDirs with same linear pass.
+  let writeDirIdx = 0;
+  for (let oldId = 0; oldId < originalLen; oldId++) {
+    if (!removeIds.has(oldId)) {
+      starDirs[writeDirIdx++] = starDirs[oldId];
     }
   }
+  starDirs.length = writeDirIdx;
 
   // Remap supernovas: removed ids are routed to their dir's meta-star via remapId.
   for (const sn of supernovas) {
     const remapped: number[] = [];
     const seen = new Set<number>();
     for (const oldId of sn.starIds) {
-      const newMappedId = remapId(oldId, removeIds, metaStarForDir, mergeGroups, idRemap);
+      const newMappedId = remapId(oldId, removeIds, metaRemap, idRemap);
       if (newMappedId !== -1 && !seen.has(newMappedId)) {
         remapped.push(newMappedId);
         seen.add(newMappedId);
@@ -315,7 +336,7 @@ function aggregate(
   // Remap comets.
   for (const comet of comets) {
     for (const hop of comet.hops) {
-      hop.starId = remapId(hop.starId, removeIds, metaStarForDir, mergeGroups, idRemap);
+      hop.starId = remapId(hop.starId, removeIds, metaRemap, idRemap);
     }
   }
 }
@@ -324,20 +345,17 @@ function aggregate(
 function remapId(
   oldId: number,
   removeIds: Set<number>,
-  metaStarForDir: Map<number, number>,
-  mergeGroups: { dirIdx: number; ids: number[] }[],
+  metaRemap: Map<number, number>,
   idRemap: Int32Array,
 ): number {
   if (!removeIds.has(oldId)) {
     return idRemap[oldId];
   }
-  // Find the merge group that contains this old id.
-  for (const group of mergeGroups) {
-    if (group.ids.includes(oldId)) {
-      const metaOldId = metaStarForDir.get(group.dirIdx)!;
-      return idRemap[metaOldId];
-    }
+  // O(1) lookup: removed id → its meta-star's old id.
+  const metaOldId = metaRemap.get(oldId);
+  if (metaOldId === undefined) {
+    // No merge group found — this is an invariant violation.
+    throw new Error("buildTimeline: unmapped star id after aggregation");
   }
-  // No merge group found — this is an invariant violation.
-  throw new Error("buildTimeline: unmapped star id after aggregation");
+  return idRemap[metaOldId];
 }

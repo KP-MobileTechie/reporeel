@@ -673,3 +673,50 @@ describe("buildTimeline – aggregation", () => {
     }
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// sizeByTime same-t collapsing
+// ---------------------------------------------------------------------------
+describe("buildTimeline – sizeByTime same-t collapsing", () => {
+  it("one commit with two changes to the same path yields a single sizeByTime entry", () => {
+    // add delta 10 + modify delta 5 at t=1000 → [[1000, 15]]
+    const input = makeTimeline([
+      {
+        hash: "a",
+        author: "alice",
+        date: 1000,
+        message: "two changes",
+        changes: [
+          { path: "a.ts", type: "add", delta: 10 },
+          { path: "a.ts", type: "modify", delta: 5 },
+        ],
+      },
+    ]);
+    const tl = buildTimeline(input);
+    expect(tl.stars).toHaveLength(1);
+    expect(tl.stars[0].sizeByTime).toEqual([[1000, 15]]);
+  });
+
+  it("two commits at the same date touching the same file yield a single sizeByTime entry with summed cumulative", () => {
+    // commit at t=2000 adds delta 7, second commit also at t=2000 modifies delta 3 → [[2000, 10]]
+    const input = makeTimeline([
+      {
+        hash: "b1",
+        author: "bob",
+        date: 2000,
+        message: "first",
+        changes: [{ path: "b.ts", type: "add", delta: 7 }],
+      },
+      {
+        hash: "b2",
+        author: "bob",
+        date: 2000,
+        message: "second",
+        changes: [{ path: "b.ts", type: "modify", delta: 3 }],
+      },
+    ]);
+    const tl = buildTimeline(input);
+    expect(tl.stars).toHaveLength(1);
+    expect(tl.stars[0].sizeByTime).toEqual([[2000, 10]]);
+  });
+});

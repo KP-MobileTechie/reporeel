@@ -6,7 +6,7 @@ export interface FileChange { path: string; type: ChangeType; delta: number; toP
 export interface Commit { hash: string; author: string; date: number; message: string; changes: FileChange[] }
 export interface CommitTimeline { repo: { name: string; owner?: string; source: Source }; commits: Commit[] } // owner set for github source (share links) // commits sorted by date asc
 
-export interface StarLife { id: number; path: string; lang: string; birth: number; death: number | null; sizeByTime: [number, number][] } // [t, cumulativeDelta]
+export interface StarLife { id: number; path: string; lang: string; birth: number; death: number | null; sizeByTime: [number, number][] } // sizeByTime: strictly increasing in t; value = cumulative abs(delta) after all changes at that t
 export interface SupernovaEvent { t: number; starIds: number[]; magnitude: number; message: string; author: string }
 export interface CometPath { author: string; hops: { t: number; starId: number }[] }
 // dirs: unique directory list; starDirs[i] = index into dirs for star i (plain data, safe to postMessage)
