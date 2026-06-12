@@ -52,6 +52,11 @@ export class Renderer {
   private startTime = 0;
 
   private fpsCallbacks: Array<(fps: number) => void> = [];
+  private contextLostCallbacks: Array<() => void> = [];
+
+  // Bound context-loss handlers (stored for removal in dispose()).
+  private readonly onContextLostHandler: (e: Event) => void;
+  private readonly onContextRestoredHandler: () => void;
 
   // Pointer drag state.
   private dragging = false;
@@ -77,6 +82,19 @@ export class Renderer {
 
     this.starField = new StarField(gl);
     this.camera = new Camera(0, 0, 1);
+
+    // ── Context-loss handling ────────────────────────────────────────────
+    this.onContextLostHandler = (e: Event) => {
+      e.preventDefault(); // required to allow context restoration
+      this.stop();        // halt the rAF loop; GPU resources are gone
+      for (const cb of this.contextLostCallbacks) cb();
+    };
+    this.onContextRestoredHandler = () => {
+      // Full GL resource re-creation on restore is out of scope; a page
+      // reload recovers cleanly — TODO if it ever matters in practice.
+    };
+    canvas.addEventListener("webglcontextlost", this.onContextLostHandler);
+    canvas.addEventListener("webglcontextrestored", this.onContextRestoredHandler);
 
     // ── Resize handling ──────────────────────────────────────────────────
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -170,6 +188,15 @@ export class Renderer {
     this.fpsCallbacks.push(cb);
   }
 
+  /**
+   * Subscribe to WebGL context-loss events. The rAF loop is already stopped
+   * when the callback fires. Use this to show a recovery message in the UI
+   * (e.g. "GPU context lost — please reload").
+   */
+  onContextLost(cb: () => void): void {
+    this.contextLostCallbacks.push(cb);
+  }
+
   start(): void {
     if (this.running) return;
     this.running = true;
@@ -229,7 +256,10 @@ export class Renderer {
 
     const view = this.camera.viewMatrix(this.canvas.width, this.canvas.height);
     this.starField.draw(view, this.dpr(), this.camera.zoom);
-    // (Task 6 effects passes would render here, into the same frame.)
+    // (Task 6 effects passes — supernova/comet/bloom — render here, into the
+    // same frame. GL STATE CONTRACT: each pass sets ALL state it needs and
+    // restores blend/depthMask/program to defaults (disabled/true/null)
+    // before returning, so passes are composable and order-independent.)
   }
 
   dispose(): void {
@@ -242,7 +272,10 @@ export class Renderer {
     c.removeEventListener("pointercancel", this.onPointerUp);
     c.removeEventListener("wheel", this.onWheel);
     c.removeEventListener("dblclick", this.onDblClick);
+    c.removeEventListener("webglcontextlost", this.onContextLostHandler);
+    c.removeEventListener("webglcontextrestored", this.onContextRestoredHandler);
     this.starField.dispose();
     this.fpsCallbacks = [];
+    this.contextLostCallbacks = [];
   }
 }

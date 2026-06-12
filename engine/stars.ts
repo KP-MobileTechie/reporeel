@@ -4,6 +4,13 @@
  * DYNAMIC_DRAW: per-frame data is re-uploaded via bufferSubData once the
  * buffers have been sized, and reallocated (bufferData) only when the star
  * count grows beyond current capacity.
+ *
+ * GL STATE CONTRACT (enforced by every render pass, including future ones):
+ *   Each render pass sets ALL GL state it needs (program, blend, depthMask,
+ *   VAO, etc.) and RESTORES blend/depthMask/program to their defaults
+ *   (BLEND disabled, depthMask true, program null) before returning.
+ *   This keeps passes composable and order-independent for future
+ *   supernova/comet/bloom passes that will be inserted after starField.draw().
  */
 
 import { STAR_VERT, STAR_FRAG, compileProgram } from "./shaders";
@@ -110,6 +117,11 @@ export class StarField {
 
     gl.drawArrays(gl.POINTS, 0, this.count);
 
+    // Restore GL defaults so the next render pass starts from a clean state
+    // (see GL STATE CONTRACT at the top of this file).
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
+    gl.useProgram(null);
     gl.bindVertexArray(null);
   }
 

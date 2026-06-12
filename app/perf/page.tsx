@@ -38,7 +38,7 @@ export default function PerfPage() {
   );
   const [errorMsg, setErrorMsg] = useState("");
   const [fps, setFps] = useState(0);
-  const [dropped, setDropped] = useState(0);
+  const [dropped, setDropped] = useState(0); // slow frames (>25ms) in the last second
   const [paused, setPaused] = useState(false);
 
   // Live ref so the pause button toggles the running tick loop.
@@ -47,6 +47,11 @@ export default function PerfPage() {
     pausedRef.current = paused;
   }, [paused]);
 
+  // Renderer-side values held in refs; flushed to React state at ~4 Hz to
+  // avoid flooding the reconciler on every rAF callback (~60 Hz).
+  const fpsRef = useRef(0);
+  const droppedRef = useRef(0);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -54,6 +59,7 @@ export default function PerfPage() {
     let renderer: Renderer | null = null;
     let worker: Worker | null = null;
     let tickRaf = 0;
+    let hudInterval = 0;
     let disposed = false;
 
     // Dropped-frame tracking (frames slower than 25ms in the last second).
@@ -107,12 +113,20 @@ export default function PerfPage() {
         const delta = now - lastFrameStamp;
         lastFrameStamp = now;
         frameTimes.push(now);
-        // Keep only the last second of frames; count those >25ms gaps.
+        // Keep only timestamps from the last second.
         while (frameTimes.length && now - frameTimes[0] > 1000) {
           frameTimes.shift();
         }
-        if (delta > 25) setDropped((d) => d + 1);
-        setFps(f);
+        // Dropped = frames with a gap >25ms, counted within the last second.
+        // Count by looking at consecutive pairs in the sliding window.
+        let slowInWindow = 0;
+        for (let i = 1; i < frameTimes.length; i++) {
+          if (frameTimes[i] - frameTimes[i - 1] > 25) slowInWindow++;
+        }
+        // Also count the gap from the previous frame into the window.
+        if (delta > 25) slowInWindow++;
+        fpsRef.current = f;
+        droppedRef.current = slowInWindow;
       });
 
       // ── Layout worker (real production path) ─────────────────────────────
@@ -136,9 +150,13 @@ export default function PerfPage() {
       const tick = () => {
         if (disposed) return;
         if (!pausedRef.current) {
+          // Worker is decoupled from the draw cadence: ticks are fire-and-forget
+          // (no backpressure); the latest worker frame wins if it arrives late.
           worker?.postMessage({ type: "tick", dt: 16 });
         }
         // Animate a deterministic subset of pulses (every 50th star).
+        // Main-thread serialization makes this in-place mutation safe: tick
+        // and renderer.frame() never execute concurrently on the same thread.
         const t = performance.now();
         for (let i = 0; i < STAR_COUNT; i += 50) {
           pulses[i] = (Math.sin(t * 0.003 + i) + 1) / 2;
@@ -150,6 +168,14 @@ export default function PerfPage() {
 
       renderer.start();
       tickRaf = requestAnimationFrame(tick);
+
+      // Flush renderer-side metrics to React state at ~4 Hz (250 ms interval)
+      // to avoid reconciler churn on every rAF tick (~60 Hz).
+      hudInterval = window.setInterval(() => {
+        setFps(fpsRef.current);
+        setDropped(droppedRef.current);
+      }, 250);
+
       setStatus("running");
     } catch (err) {
       if (err instanceof WebGLUnsupportedError) {
@@ -163,6 +189,7 @@ export default function PerfPage() {
     return () => {
       disposed = true;
       if (tickRaf) cancelAnimationFrame(tickRaf);
+      window.clearInterval(hudInterval);
       worker?.terminate();
       renderer?.dispose();
     };
@@ -193,7 +220,7 @@ export default function PerfPage() {
             Stars: <span className="tabular-nums">{STAR_COUNT.toLocaleString()}</span>
           </div>
           <div>
-            Dropped (&gt;25ms):{" "}
+            Slow (&gt;25ms/last 1s):{" "}
             <span className={dropped > 0 ? "text-amber-400" : ""}>{dropped}</span>
           </div>
           <button
