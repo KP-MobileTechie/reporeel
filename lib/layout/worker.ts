@@ -15,6 +15,12 @@
  *   IN  {type:"init", starDirs:number[], dirCount:number, seed:number}
  *   IN  {type:"tick", dt:number}
  *   OUT {type:"frame", positions:Float32Array, version:number}  (buffer transferred)
+ *
+ * Protocol invariants:
+ *   - `tick` messages received before any `init` are silently ignored (no frame posted).
+ *   - `version` is monotonic across re-inits; it is never reset to 0. Consumers detect
+ *     new layouts via the init round-trip (the first frame posted after an init), not
+ *     via a version reset.
  */
 
 import { computeAnchors, initPositions, step } from "./sim";
@@ -26,6 +32,7 @@ let velocities: Float32Array = new Float32Array(0);
 let anchors: Float32Array = new Float32Array(0);
 let starDirs: number[] = [];
 let version = 0;
+let inited = false;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function postFrame(): void {
@@ -58,12 +65,15 @@ function postFrame(): void {
     master = initPositions(msg.starDirs, msg.dirCount, msg.seed);
     velocities = new Float32Array(master.length);
     spare = new Float32Array(master.length);
-    version = 0;
+    // version is intentionally NOT reset here — it is monotonic across re-inits.
+    inited = true;
     postFrame();
     return;
   }
 
   if (msg.type === "tick") {
+    // Ignore tick before any init to avoid posting frames with empty/stale state.
+    if (!inited) return;
     step(master, velocities, starDirs, anchors, msg.dt);
     postFrame();
     return;
