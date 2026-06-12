@@ -174,7 +174,7 @@ export function sceneAtTime(prepared: PreparedTimeline, t: number): SceneState {
       if (sn.t > ct) break; // past the active window
       // sn.t in (windowStart, ct] → active
       activeSupernovas.push({
-        starIds: sn.starIds,
+        starIds: sn.starIds, // shared by reference with the Timeline; treat as read-only
         age: (ct - sn.t) / SUPERNOVA_MS,
         magnitude: sn.magnitude,
       });
@@ -188,9 +188,9 @@ export function sceneAtTime(prepared: PreparedTimeline, t: number): SceneState {
     if (hops.length < 2) continue; // single-hop comets never emit
 
     // Find which segment [hops[k], hops[k+1]) the current time falls in.
-    // We want the last hop with hop.t <= ct, then check if we are before the next hop.
-    // Extract hop times and binary search for efficiency.
-    // We iterate (comet hops are typically short) — O(hops) per comet is fine.
+    // TODO(perf): linear scan over hops; the plan calls for binary search. Fine for
+    // typical hop counts, but a prolific author on a 3000-commit repo pays O(hops)
+    // here every frame. Replace with lowerBound over hop times if profiling flags it.
     let segK = -1;
     for (let k = 0; k < hops.length - 1; k++) {
       const tk = hops[k].t;
@@ -209,17 +209,9 @@ export function sceneAtTime(prepared: PreparedTimeline, t: number): SceneState {
     if (segK === -1) continue; // before first hop or at/after last hop
 
     const tk = hops[segK].t;
-    let tk1 = hops[segK + 1].t;
-    let fromStar = hops[segK].starId;
-    let toStar = hops[segK + 1].starId;
-
-    // When we find the segment, account for any zero-length predecessor hops:
-    // The fromStar should be the first non-zero-start of this effective segment.
-    // Actually, re-read the spec: "treating the comet as already at the next hop"
-    // means we skip the zero-length segment entirely and the effective fromStar
-    // becomes the hop after the skipped segment.
-    // The code above already does this correctly: we only match non-zero segments.
-
+    const tk1 = hops[segK + 1].t;
+    const fromStar = hops[segK].starId;
+    const toStar = hops[segK + 1].starId;
     const progress = (ct - tk) / (tk1 - tk);
 
     cometPositions.push({ author, fromStar, toStar, progress });
