@@ -144,6 +144,12 @@ function erofs(): Error & { code: string } {
 // byte-size difference — ~40 bytes per "line" of churn, +1 so every change
 // registers at least 1 unit of mass). Rename detection is NOT attempted: a
 // rename surfaces as delete(old)+add(new), which is acceptable for v1.
+//
+// NOTE: GitWalkerRepo.stat() is a stub (returns undefined) in isomorphic-git
+// v1.x — see node_modules/isomorphic-git/index.js `async stat(_entry) {}`.
+// We therefore obtain blob byte-size via entry.content()?.byteLength instead.
+// content() is only called for blob entries whose oids actually differ, so
+// the cost is bounded to truly changed files.
 // ---------------------------------------------------------------------------
 async function diffTrees(
   fs: MemFs,
@@ -164,7 +170,7 @@ async function diffTrees(
         const e = entries[0];
         if (!e) return null;
         if ((await e.type()) !== "blob") return null;
-        const size = (await e.stat()).size;
+        const size = (await e.content())?.byteLength ?? 0;
         return { path: filepath, type: "add", delta: sizeToDelta(size) };
       }
 
@@ -178,8 +184,8 @@ async function diffTrees(
 
       if (aOid === bOid) return null; // unchanged
 
-      const aSize = aIsBlob ? (await a!.stat()).size : 0;
-      const bSize = bIsBlob ? (await b!.stat()).size : 0;
+      const aSize = aIsBlob ? ((await a!.content())?.byteLength ?? 0) : 0;
+      const bSize = bIsBlob ? ((await b!.content())?.byteLength ?? 0) : 0;
       const delta = sizeToDelta(Math.abs(bSize - aSize));
 
       if (!aOid && bOid) return { path: filepath, type: "add", delta };
