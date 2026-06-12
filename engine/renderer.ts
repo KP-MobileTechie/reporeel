@@ -17,6 +17,8 @@
 import type { SceneState, LayoutFrame } from "@/lib/types";
 import { Camera } from "./camera";
 import { StarField } from "./stars";
+import { Effects } from "./effects";
+import { BloomPipeline, type BloomQuality } from "./post";
 
 export class WebGLUnsupportedError extends Error {
   constructor(message = "WebGL2 is not supported in this browser") {
@@ -34,6 +36,8 @@ export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly gl: WebGL2RenderingContext;
   private readonly starField: StarField;
+  private readonly effects: Effects;
+  private readonly post: BloomPipeline;
   private readonly resizeObserver: ResizeObserver;
 
   // Staged scene data (latest wins; drawn every frame).
@@ -41,8 +45,22 @@ export class Renderer {
   private sizes: Float32Array | null = null;
   private colors: Float32Array | null = null;
   private pulses: Float32Array | null = null;
+  private scene: SceneState | null = null;
   private starCount = 0;
   private dirty = false;
+
+  // Bloom strength fed to the composite pass.
+  private bloomStrength = 1.2;
+
+  // Supernova shake bookkeeping: track the `t` of supernovas we've already
+  // shaken for, so each newly activated supernova shakes the camera once.
+  private readonly shakenSupernovas = new Set<number>();
+  private lastSceneT = 0;
+
+  // Auto-quality: if the FPS EMA stays below 40 for 3 consecutive seconds,
+  // bloom is disabled once and never auto-re-enabled (documented).
+  private lowFpsSinceMs = 0;
+  private autoLowApplied = false;
 
   private clear: [number, number, number] = [0.02, 0.02, 0.05];
 
@@ -81,6 +99,8 @@ export class Renderer {
     this.gl = gl;
 
     this.starField = new StarField(gl);
+    this.effects = new Effects(gl);
+    this.post = new BloomPipeline(gl);
     this.camera = new Camera(0, 0, 1);
 
     // ── Context-loss handling ────────────────────────────────────────────
@@ -163,6 +183,7 @@ export class Renderer {
       this.canvas.height = h;
     }
     this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    this.post.resize(this.canvas.width, this.canvas.height);
   }
 
   /**
@@ -175,8 +196,28 @@ export class Renderer {
     this.sizes = scene.sizes;
     this.pulses = scene.pulses;
     this.colors = colors;
+    this.scene = scene;
     this.starCount = scene.sizes.length;
     this.dirty = true;
+  }
+
+  /** Star-id-indexed death times (epoch ms; NaN = alive) for collapse rings. */
+  setDeaths(deaths: Float64Array): void {
+    this.effects.setDeaths(deaths);
+  }
+
+  /** Accent color for supernova rings and comet trails (0..1 rgb). */
+  setAccent(r: number, g: number, b: number): void {
+    this.effects.setAccent(r, g, b);
+  }
+
+  /**
+   * Bloom quality passthrough for the UI. "low" disables bloom entirely. Note:
+   * auto-quality may have already forced "low" on sustained low FPS and will
+   * never auto-re-enable; an explicit call here still takes effect.
+   */
+  setQuality(q: BloomQuality): void {
+    this.post.setQuality(q);
   }
 
   setClearColor(r: number, g: number, b: number): void {
@@ -227,6 +268,42 @@ export class Renderer {
       for (const cb of this.fpsCallbacks) cb(this.fps);
     }
 
+    // Auto-quality: disable bloom once after 3s of sustained sub-40 FPS.
+    if (!this.autoLowApplied) {
+      if (this.fps > 0 && this.fps < 40) {
+        this.lowFpsSinceMs += dt;
+        if (this.lowFpsSinceMs >= 3000) {
+          this.post.setQuality("low");
+          this.autoLowApplied = true;
+          console.info("reporeel: bloom disabled (low fps)");
+        }
+      } else {
+        this.lowFpsSinceMs = 0;
+      }
+    }
+
+    // Newly activated supernovas shake the camera once (magnitude > 0.6).
+    const scene = this.scene;
+    if (scene) {
+      // If scene time jumped backward (scrub/seek), reset the seen-set so future
+      // forward playback re-triggers shakes.
+      if (scene.t < this.lastSceneT) this.shakenSupernovas.clear();
+      this.lastSceneT = scene.t;
+      for (const sn of scene.activeSupernovas) {
+        if (sn.magnitude <= 0.6) continue;
+        // Identify a supernova by its activation time: t - age*SUPERNOVA window
+        // is constant per event, but age alone is stable enough within a frame;
+        // we key by the event's nominal start time = scene.t - age*duration.
+        const key = sn.starIds.length ? sn.starIds[0] * 1e9 + Math.round(scene.t - sn.age * 2000) : Math.round(scene.t);
+        if (!this.shakenSupernovas.has(key)) {
+          this.shakenSupernovas.add(key);
+          this.camera.shake(sn.magnitude);
+        }
+      }
+      // Bound the set so it can't grow without limit over a long session.
+      if (this.shakenSupernovas.size > 512) this.shakenSupernovas.clear();
+    }
+
     // Camera motion.
     this.camera.update(dt);
     this.camera.autoDrift(now - this.startTime);
@@ -249,17 +326,30 @@ export class Renderer {
       this.dirty = false;
     }
 
-    // Draw passes for this frame.
+    // Draw passes for this frame. The scene (stars + effects) renders into the
+    // bloom pipeline's offscreen target; post.end() applies bloom and composites
+    // to the screen (a no-op in low quality, where begin() bound the screen).
+    // GL STATE CONTRACT: each pass sets ALL state it needs and restores
+    // blend/depthMask/program to defaults before returning.
     const gl = this.gl;
+    const view = this.camera.viewMatrix(this.canvas.width, this.canvas.height);
+
+    this.post.begin();
     gl.clearColor(this.clear[0], this.clear[1], this.clear[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const view = this.camera.viewMatrix(this.canvas.width, this.canvas.height);
     this.starField.draw(view, this.dpr(), this.camera.zoom);
-    // (Task 6 effects passes — supernova/comet/bloom — render here, into the
-    // same frame. GL STATE CONTRACT: each pass sets ALL state it needs and
-    // restores blend/depthMask/program to defaults (disabled/true/null)
-    // before returning, so passes are composable and order-independent.)
+
+    if (this.positions) {
+      this.effects.update(
+        scene ?? { activeSupernovas: [], cometPositions: [] } as unknown as SceneState,
+        this.positions,
+        dt
+      );
+      this.effects.draw(view, scene ? scene.t : now);
+    }
+
+    this.post.end(this.bloomStrength);
   }
 
   dispose(): void {
@@ -275,6 +365,8 @@ export class Renderer {
     c.removeEventListener("webglcontextlost", this.onContextLostHandler);
     c.removeEventListener("webglcontextrestored", this.onContextRestoredHandler);
     this.starField.dispose();
+    this.effects.dispose();
+    this.post.dispose();
     this.fpsCallbacks = [];
     this.contextLostCallbacks = [];
   }

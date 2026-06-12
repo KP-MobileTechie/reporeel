@@ -40,12 +40,24 @@ export default function PerfPage() {
   const [fps, setFps] = useState(0);
   const [dropped, setDropped] = useState(0); // slow frames (>25ms) in the last second
   const [paused, setPaused] = useState(false);
+  // Auto-enable stress when loaded with ?stress=1 (used by headless verification
+  // so a single-shot render exercises the effect passes).
+  const [stress, setStress] = useState(
+    typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("stress") === "1"
+  );
 
   // Live ref so the pause button toggles the running tick loop.
   const pausedRef = useRef(false);
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+
+  // Live ref so the stress toggle drives effect injection in the tick loop.
+  const stressRef = useRef(false);
+  useEffect(() => {
+    stressRef.current = stress;
+  }, [stress]);
 
   // Renderer-side values held in refs; flushed to React state at ~4 Hz to
   // avoid flooding the reconciler on every rAF callback (~60 Hz).
@@ -97,6 +109,25 @@ export default function PerfPage() {
         cometPositions: [],
       };
 
+      // ── Stress-mode synthetic effect data (synthetic only; see toggle) ────
+      // Precompute a handful of random star clusters for supernovas, and a set
+      // of random from/to star pairs for comets. A star-id-indexed deaths array
+      // (Float64Array, NaN = alive) is mutated each frame so ~50 stars "die"
+      // every 5s on a cycle and then revive — purely to exercise the collapse
+      // pass; real timelines supply genuine death times.
+      const STRESS_CLUSTERS = Array.from({ length: 8 }, () => {
+        const base = Math.floor(rand() * (STAR_COUNT - 12));
+        return Array.from({ length: 8 }, (_, k) => base + k);
+      });
+      const STRESS_COMETS = Array.from({ length: 20 }, () => ({
+        author: `author-${Math.floor(rand() * 20)}`,
+        fromStar: Math.floor(rand() * STAR_COUNT),
+        toStar: Math.floor(rand() * STAR_COUNT),
+      }));
+      const deaths = new Float64Array(STAR_COUNT).fill(NaN);
+      let deathsApplied = false;
+      const t0 = performance.now();
+
       // Latest layout frame from the worker (positions, x/y per star id).
       let layout: LayoutFrame = {
         positions: new Float32Array(STAR_COUNT * 2),
@@ -106,6 +137,8 @@ export default function PerfPage() {
       // ── Renderer ────────────────────────────────────────────────────────
       renderer = new Renderer(canvas);
       renderer.setClearColor(0.02, 0.02, 0.06);
+      renderer.setAccent(0.55, 0.36, 0.96);
+      renderer.setDeaths(deaths);
       // Start zoomed out enough to see the whole spiral (SPIRAL_STEP*sqrt(120)).
       renderer.camera.zoom = 0.18;
       renderer.onFrame((f) => {
@@ -161,6 +194,46 @@ export default function PerfPage() {
         for (let i = 0; i < STAR_COUNT; i += 50) {
           pulses[i] = (Math.sin(t * 0.003 + i) + 1) / 2;
         }
+
+        // ── Stress effects ────────────────────────────────────────────────
+        const elapsed = t - t0;
+        // scene.t must share a domain with the deaths array (both ms since t0).
+        scene.t = elapsed;
+        if (stressRef.current) {
+          // One supernova per second, cycling through clusters; magnitude 0.9.
+          const sec = Math.floor(elapsed / 1000);
+          const cluster = STRESS_CLUSTERS[sec % STRESS_CLUSTERS.length];
+          const age = (elapsed % 1000) / 1000; // 0..1 over the active second
+          scene.activeSupernovas = [{ starIds: cluster, age, magnitude: 0.9 }];
+
+          // 20 comets; progress cycles 0→1 every 2s.
+          const progress = (elapsed % 2000) / 2000;
+          scene.cometPositions = STRESS_COMETS.map((c) => ({
+            author: c.author,
+            fromStar: c.fromStar,
+            toStar: c.toStar,
+            progress,
+          }));
+
+          // ~50 stars die every 5s on a cycle, then revive on the next cycle.
+          const cyclePhase = Math.floor(elapsed / 5000) % 2;
+          if (cyclePhase === 1 && !deathsApplied) {
+            const start = (Math.floor(elapsed / 5000) * 37) % (STAR_COUNT - 50);
+            for (let i = 0; i < 50; i++) deaths[start + i] = elapsed; // die now
+            deathsApplied = true;
+          } else if (cyclePhase === 0 && deathsApplied) {
+            deaths.fill(NaN); // revive all
+            deathsApplied = false;
+          }
+        } else {
+          scene.activeSupernovas = [];
+          scene.cometPositions = [];
+          if (deathsApplied) {
+            deaths.fill(NaN);
+            deathsApplied = false;
+          }
+        }
+
         // Feed the latest data to the renderer.
         renderer?.setScene(scene, layout, colors);
         tickRaf = requestAnimationFrame(tick);
@@ -223,13 +296,24 @@ export default function PerfPage() {
             Slow (&gt;25ms/last 1s):{" "}
             <span className={dropped > 0 ? "text-amber-400" : ""}>{dropped}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setPaused((p) => !p)}
-            className="mt-2 rounded bg-white/10 px-3 py-1 hover:bg-white/20"
-          >
-            {paused ? "Resume" : "Pause"} ticks
-          </button>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPaused((p) => !p)}
+              className="rounded bg-white/10 px-3 py-1 hover:bg-white/20"
+            >
+              {paused ? "Resume" : "Pause"} ticks
+            </button>
+            <button
+              type="button"
+              onClick={() => setStress((s) => !s)}
+              className={`rounded px-3 py-1 ${
+                stress ? "bg-violet-500/40 hover:bg-violet-500/50" : "bg-white/10 hover:bg-white/20"
+              }`}
+            >
+              Stress {stress ? "on" : "off"}
+            </button>
+          </div>
         </div>
       )}
     </div>

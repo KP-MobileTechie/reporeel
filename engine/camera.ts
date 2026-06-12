@@ -37,6 +37,15 @@ export class Camera {
   // Reused per-frame matrix buffer (avoids allocating a Float32Array each draw).
   private readonly _view = new Float32Array(9);
 
+  // ── Camera shake (presentation-only) ──────────────────────────────────────
+  // `_shake` is the current amplitude in device px; it decays each update().
+  // The jitter offset is derived from a counter-based hash (frame-stable, not
+  // Math.random) so the shake is deterministic and reproducible.
+  private _shake = 0;
+  private _shakeFrame = 0;
+  private _shakeOffX = 0;
+  private _shakeOffY = 0;
+
   constructor(x = 0, y = 0, zoom = 1) {
     this.x = x;
     this.y = y;
@@ -93,8 +102,29 @@ export class Camera {
     return [this.x + px / this.zoom, this.y + py / this.zoom];
   }
 
-  /** Apply inertia with frame-rate-independent decay. */
+  /** Add a shake impulse (e.g. on a supernova). Amplitude is capped at 12 px. */
+  shake(magnitude: number): void {
+    this._shake = Math.min(this._shake + magnitude * 6, 12);
+  }
+
+  /** Apply inertia and shake decay, both with frame-rate-independent decay. */
   update(dtMs: number): void {
+    // ── Shake: decay amplitude, then compute a frame-stable jitter offset. ──
+    if (this._shake > 0) {
+      this._shake *= Math.pow(0.85, dtMs / 16.67);
+      if (this._shake < 0.05) {
+        this._shake = 0;
+        this._shakeOffX = 0;
+        this._shakeOffY = 0;
+      } else {
+        // Counter-based hash → two pseudo-random values in [-1, 1].
+        this._shakeFrame++;
+        const f = this._shakeFrame;
+        this._shakeOffX = (hash01(f * 12.9898) * 2 - 1) * this._shake;
+        this._shakeOffY = (hash01(f * 78.233) * 2 - 1) * this._shake;
+      }
+    }
+
     if (this.vx === 0 && this.vy === 0) return;
     this.x += this.vx * dtMs;
     this.y += this.vy * dtMs;
@@ -131,12 +161,22 @@ export class Camera {
     //   | sx   0   -x*sx |
     //   | 0    sy  -y*sy |
     //   | 0    0    1     |
+    // Shake is a presentation-only screen-space offset in device px, converted
+    // to a clip-space translation (px * 2 / viewport) folded into the matrix.
+    const shx = this._shakeOffX * (2 / viewportW);
+    const shy = this._shakeOffY * (2 / viewportH);
     const m = this._view;
     m[0] = sx; m[1] = 0; m[2] = 0;
     m[3] = 0; m[4] = sy; m[5] = 0;
-    m[6] = -this.x * sx; m[7] = -this.y * sy; m[8] = 1;
+    m[6] = -this.x * sx + shx; m[7] = -this.y * sy + shy; m[8] = 1;
     return m;
   }
+}
+
+/** Counter-based hash → a deterministic value in [0, 1). Presentation only. */
+function hash01(x: number): number {
+  const s = Math.sin(x) * 43758.5453;
+  return s - Math.floor(s);
 }
 
 /** Clamp zoom to a sane range to avoid degenerate / overflow framings. */
