@@ -76,6 +76,9 @@ export function normalizeLocal(
       repo: { name: repoName, source: "local" },
       commits: capped,
     },
+    // normalizeLocal cannot know the walk-skip count (it only sees the entries
+    // that survived). parseLocalRepo overwrites this with the worker's
+    // skippedInWalk before invoking onDone.
     skipped: 0,
   };
 }
@@ -126,7 +129,14 @@ export function parseLocalRepo(
   };
 
   const req: ParseRequest = { type: "parse", files };
-  worker.postMessage(req);
+  // Transfer the underlying ArrayBuffers (zero-copy) instead of structured-
+  // cloning them. NOTE: transferred buffers are CONSUMED — they become detached
+  // on this (main) thread. Task 8's directory reader must NOT reuse these
+  // buffers after handing them to parseLocalRepo.
+  worker.postMessage(
+    req,
+    files.map((f) => f.data.buffer),
+  );
 
   // Return a cancel handle.
   return () => worker.terminate();
