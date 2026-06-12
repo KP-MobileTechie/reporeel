@@ -149,10 +149,30 @@ export function sceneAtTime(prepared: PreparedTimeline, t: number): SceneState {
     }
   }
 
-  // --- active supernovas ---
+  // --- active supernovas (binary-search windowed scan) ---
+  // supernovas are sorted ascending by t (guaranteed by buildTimeline).
+  // Active window: sn.t <= ct < sn.t + SUPERNOVA_MS
+  //   ↔  ct - SUPERNOVA_MS < sn.t <= ct
+  // Find the first index where sn.t > ct - SUPERNOVA_MS using a lowerBound,
+  // then walk forward only while sn.t <= ct (active window).
   const activeSupernovas: SceneState["activeSupernovas"] = [];
-  for (const sn of supernovas) {
-    if (sn.t <= ct && ct < sn.t + SUPERNOVA_MS) {
+  {
+    const windowStart = ct - SUPERNOVA_MS;
+    // lowerBound: first index i where supernovas[i].t > windowStart
+    let lo = 0;
+    let hi = supernovas.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (supernovas[mid].t <= windowStart) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    for (let i = lo; i < supernovas.length; i++) {
+      const sn = supernovas[i];
+      if (sn.t > ct) break; // past the active window
+      // sn.t in (windowStart, ct] → active
       activeSupernovas.push({
         starIds: sn.starIds,
         age: (ct - sn.t) / SUPERNOVA_MS,

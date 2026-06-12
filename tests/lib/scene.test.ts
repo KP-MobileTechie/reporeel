@@ -307,6 +307,33 @@ describe("sceneAtTime – supernovas", () => {
     const scene = sceneAtTime(prepare(tl), 3600);
     expect(scene.activeSupernovas).toHaveLength(2);
   });
+
+  it("1000 supernovas spaced 10000ms apart: windowed binary search returns exactly the one active event", () => {
+    // Build 1000 supernovas at t=0, 10000, 20000, ..., 9990000 (spaced 10000ms apart).
+    // SUPERNOVA_MS=2000, so windows never overlap (gap 10000 >> 2000).
+    const COUNT = 1000;
+    const SPACING = 10_000;
+    const TARGET_IDX = 499; // the supernova we will sample inside (0-based)
+    const snList: SupernovaEvent[] = [];
+    for (let i = 0; i < COUNT; i++) {
+      snList.push({ t: i * SPACING, starIds: [i], magnitude: i / COUNT, message: `m${i}`, author: "x" });
+    }
+    const targetT = TARGET_IDX * SPACING;
+    const sampleInside = targetT + 500; // 500ms into the 2000ms window → age = 500/2000 = 0.25
+    const sampleBetween = targetT + SUPERNOVA_MS + 1; // just after window closes, before next
+
+    const tl = makeTimeline({ supernovas: snList, t0: 0, t1: COUNT * SPACING });
+
+    // Sample inside the target window: exactly one active supernova with correct age
+    const sceneInside = sceneAtTime(prepare(tl), sampleInside);
+    expect(sceneInside.activeSupernovas).toHaveLength(1);
+    expect(sceneInside.activeSupernovas[0].starIds).toEqual([TARGET_IDX]);
+    expect(sceneInside.activeSupernovas[0].age).toBeCloseTo(500 / SUPERNOVA_MS, 10);
+
+    // Sample between windows: no active supernovas
+    const sceneBetween = sceneAtTime(prepare(tl), sampleBetween);
+    expect(sceneBetween.activeSupernovas).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
