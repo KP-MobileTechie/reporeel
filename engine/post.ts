@@ -54,9 +54,10 @@ export class BloomPipeline {
   private readonly uCompBloom: WebGLUniformLocation | null;
   private readonly uCompStrength: WebGLUniformLocation | null;
 
-  // Color texture format for the scene FBO.
-  private readonly colorType: number; // gl.HALF_FLOAT or gl.UNSIGNED_BYTE
-  private readonly colorInternal: number; // gl.RGBA16F or gl.RGBA8
+  // Color texture format for the scene FBO. Not readonly: may be downgraded to
+  // UNSIGNED_BYTE/RGBA8 at first resize if a half-float FBO turns out incomplete.
+  private colorType: number; // gl.HALF_FLOAT or gl.UNSIGNED_BYTE
+  private colorInternal: number; // gl.RGBA16F or gl.RGBA8
 
   private fboA: Fbo | null = null; // full-res scene
   private fboB: Fbo | null = null; // half-res ping
@@ -91,13 +92,60 @@ export class BloomPipeline {
       !!gl.getExtension("EXT_color_buffer_half_float") ||
       !!gl.getExtension("EXT_color_buffer_float");
     const halfLinear = !!gl.getExtension("OES_texture_half_float_linear");
-    if (halfFloat && halfLinear) {
+
+    // Probe FBO completeness with a disposable 1x1 test FBO before committing to
+    // a format. Some drivers advertise the extension but fail completeness checks
+    // in practice (e.g. certain Android WebGL implementations). All three real
+    // FBOs (A, B, C) must use the same format, so we decide once here.
+    if (halfFloat && halfLinear && this.probeFboComplete(gl, gl.RGBA16F, gl.HALF_FLOAT)) {
       this.colorType = gl.HALF_FLOAT;
       this.colorInternal = gl.RGBA16F;
     } else {
       this.colorType = gl.UNSIGNED_BYTE;
       this.colorInternal = gl.RGBA8;
+      if (halfFloat && halfLinear) {
+        // Extensions present but the half-float FBO was incomplete; fall back silently.
+        console.info("reporeel: HDR framebuffer incomplete, falling back to 8-bit");
+      }
     }
+  }
+
+  /**
+   * Allocates a temporary 1x1 FBO with the given internal format and pixel type,
+   * checks framebuffer completeness, destroys it, and returns whether it was
+   * complete. Used once during construction to probe driver support.
+   */
+  private probeFboComplete(
+    gl: WebGL2RenderingContext,
+    internal: number,
+    type: number
+  ): boolean {
+    const tex = gl.createTexture();
+    const fb = gl.createFramebuffer();
+    if (!tex || !fb) {
+      gl.deleteTexture(tex);
+      gl.deleteFramebuffer(fb);
+      return false;
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, internal, 1, 1, 0, gl.RGBA, type, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.deleteFramebuffer(fb);
+    gl.deleteTexture(tex);
+
+    return status === gl.FRAMEBUFFER_COMPLETE;
   }
 
   setQuality(q: BloomQuality): void {
@@ -228,6 +276,35 @@ export class BloomPipeline {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+
+    // Verify completeness. If the originally chosen format is half-float and
+    // this FBO turns out to be incomplete (e.g. size-dependent driver bug),
+    // destroy it and retry with UNSIGNED_BYTE. If the byte fallback is also
+    // incomplete, throw with the status code so the caller can diagnose it.
+    let status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE && type !== gl.UNSIGNED_BYTE) {
+      // Clean up the incomplete half-float FBO/texture.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.deleteFramebuffer(fb);
+      gl.deleteTexture(tex);
+
+      // Mark all future FBOs as 8-bit so the pipeline stays consistent.
+      this.colorType = gl.UNSIGNED_BYTE;
+      this.colorInternal = gl.RGBA8;
+      console.info("reporeel: HDR framebuffer incomplete, falling back to 8-bit");
+
+      // Recurse with the byte format; will throw below if also incomplete.
+      return this.createFbo(w, h, gl.RGBA8, gl.UNSIGNED_BYTE);
+    }
+
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.deleteFramebuffer(fb);
+      gl.deleteTexture(tex);
+      throw new Error(`Framebuffer incomplete: status 0x${status.toString(16)}`);
+    }
 
     gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);

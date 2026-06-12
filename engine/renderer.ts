@@ -15,6 +15,7 @@
  */
 
 import type { SceneState, LayoutFrame } from "@/lib/types";
+import { SUPERNOVA_MS } from "@/lib/timeline/scene";
 import { Camera } from "./camera";
 import { StarField } from "./stars";
 import { Effects } from "./effects";
@@ -57,8 +58,9 @@ export class Renderer {
   private readonly shakenSupernovas = new Set<number>();
   private lastSceneT = 0;
 
-  // Auto-quality: if the FPS EMA stays below 40 for 3 consecutive seconds,
-  // bloom is disabled once and never auto-re-enabled (documented).
+  // Auto-quality: if the FPS EMA stays below 40 for 3 cumulative seconds
+  // without crossing back above 40, bloom is disabled once and never
+  // auto-re-enabled (documented).
   private lowFpsSinceMs = 0;
   private autoLowApplied = false;
 
@@ -291,10 +293,10 @@ export class Renderer {
       this.lastSceneT = scene.t;
       for (const sn of scene.activeSupernovas) {
         if (sn.magnitude <= 0.6) continue;
-        // Identify a supernova by its activation time: t - age*SUPERNOVA window
-        // is constant per event, but age alone is stable enough within a frame;
-        // we key by the event's nominal start time = scene.t - age*duration.
-        const key = sn.starIds.length ? sn.starIds[0] * 1e9 + Math.round(scene.t - sn.age * 2000) : Math.round(scene.t);
+        // Identify a supernova by its activation time: age is (scene.t - sn.t) /
+        // SUPERNOVA_MS, so scene.t - age * SUPERNOVA_MS recovers sn.t, which is
+        // constant for a given event across frames regardless of current scene.t.
+        const key = sn.starIds.length ? sn.starIds[0] * 1e9 + Math.round(scene.t - sn.age * SUPERNOVA_MS) : Math.round(scene.t);
         if (!this.shakenSupernovas.has(key)) {
           this.shakenSupernovas.add(key);
           this.camera.shake(sn.magnitude);
