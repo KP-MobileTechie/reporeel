@@ -1,0 +1,34 @@
+[
+  {
+    "sha": "a1111111111111111111111111111111111111aa",
+    "commit": {
+      "author": { "name": "Ada Lovelace", "date": "2023-01-01T10:00:00Z" },
+      "committer": { "name": "Ada Lovelace", "date": "2023-01-01T10:00:00Z" },
+      "message": "Initial commit"
+    }
+  },
+  {
+    "sha": "b2222222222222222222222222222222222222bb",
+    "commit": {
+      "author": { "name": "Grace Hopper", "date": "2023-01-02T12:30:00Z" },
+      "committer": { "name": "Grace Hopper", "date": "2023-01-02T12:30:00Z" },
+      "message": "Add feature"
+    }
+  },
+  {
+    "sha": "c3333333333333333333333333333333333333cc",
+    "commit": {
+      "author": null,
+      "committer": { "name": "CI Bot", "date": "2023-01-03T08:15:00Z" },
+      "message": "Automated bump (author null, falls back to committer)"
+    }
+  },
+  {
+    "sha": "d4444444444444444444444444444444444444dd",
+    "commit": {
+      "author": { "name": "Alan Turing", "date": "2023-01-04T18:45:00Z" },
+      "committer": { "name": "Alan Turing", "date": "2023-01-04T18:45:00Z" },
+      "message": "Refactor module"
+    }
+  }
+]

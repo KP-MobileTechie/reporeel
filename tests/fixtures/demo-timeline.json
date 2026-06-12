@@ -1,0 +1,34 @@
+{
+  "repo": { "name": "demo-repo", "source": "demo" },
+  "commits": [
+    {
+      "hash": "c0ffee2",
+      "author": "Grace Hopper",
+      "date": 1672660200000,
+      "message": "Add feature",
+      "changes": [
+        { "path": "src/feature.ts", "type": "add", "delta": 40 },
+        { "path": "src/old.ts", "type": "delete", "delta": -25 }
+      ]
+    },
+    {
+      "hash": "c0ffee1",
+      "author": "Ada Lovelace",
+      "date": 1672567200000,
+      "message": "Initial commit",
+      "changes": [
+        { "path": "README.md", "type": "add", "delta": 12 }
+      ]
+    },
+    {
+      "hash": "c0ffee3",
+      "author": "Alan Turing",
+      "date": 1672857900000,
+      "message": "Rename module",
+      "changes": [
+        { "path": "src/feature.ts", "type": "rename", "delta": 0, "toPath": "src/core.ts" },
+        { "path": "src/core.ts", "type": "modify", "delta": 8 }
+      ]
+    }
+  ]
+}
