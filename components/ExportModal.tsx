@@ -52,7 +52,10 @@ export function ExportModal({
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const abortRef = useRef(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
 
   const support = isExportSupported();
   const encoder = pickEncoder({
@@ -77,13 +80,44 @@ export function ExportModal({
 
   const copyShare = async () => {
     if (!shareUrl) return;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
+    setCopyFailed(false);
+    // Prefer the async Clipboard API; fall back to a temporary textarea +
+    // execCommand("copy") when it's unavailable (insecure context / older
+    // engines). On total failure, surface a brief manual-copy message rather
+    // than failing silently.
+    const flagCopied = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setCopied(false);
+    };
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        flagCopied();
+        return;
+      } catch {
+        /* fall through to legacy path */
+      }
     }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = shareUrl;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      if (ok) {
+        flagCopied();
+        return;
+      }
+    } catch {
+      /* fall through to failure message */
+    }
+    setCopied(false);
+    setCopyFailed(true);
+    setTimeout(() => setCopyFailed(false), 3000);
   };
 
   // Reset abort flag when closing.
@@ -92,6 +126,28 @@ export function ExportModal({
       abortRef.current = true;
     };
   }, []);
+
+  // a11y: move focus into the dialog on open, restore to the previously
+  // focused element on close.
+  useEffect(() => {
+    const prevFocused = document.activeElement as HTMLElement | null;
+    (closeBtnRef.current ?? dialogRef.current)?.focus();
+    return () => {
+      prevFocused?.focus?.();
+    };
+  }, []);
+
+  // a11y: Esc closes the modal (ignored while an export is in flight).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && phase !== "exporting") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [phase, onClose]);
 
   const runExport = async () => {
     if (encoder === "none") return;
@@ -148,7 +204,9 @@ export function ExportModal({
 
   return (
     <div
-      className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
+      ref={dialogRef}
+      tabIndex={-1}
+      className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm outline-none"
       role="dialog"
       aria-modal="true"
       aria-label="Export video"
@@ -157,6 +215,7 @@ export function ExportModal({
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Export video</h2>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
             className="rounded-lg px-2 py-1 text-fg-dim hover:text-fg"
@@ -283,6 +342,11 @@ export function ExportModal({
             </button>
           </div>
         </div>
+        {copyFailed && (
+          <p className="mt-2 text-right text-xs text-red-400">
+            copy failed — select and copy manually
+          </p>
+        )}
       </div>
     </div>
   );

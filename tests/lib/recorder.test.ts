@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { planExport, pickEncoder } from "@/lib/export/recorder";
+import {
+  planExport,
+  pickEncoder,
+  codecForHeight,
+  bitrateForHeight,
+} from "@/lib/export/recorder";
 
 describe("planExport", () => {
   it("produces exact frame counts at 30fps", () => {
@@ -62,5 +67,25 @@ describe("pickEncoder", () => {
 
   it("returns none when nothing is available", () => {
     expect(pickEncoder({ hasVideoEncoder: false, hasMediaRecorder: false })).toBe("none");
+  });
+});
+
+describe("codecForHeight", () => {
+  it("uses Baseline L3.1 (42001f) for <=720p", () => {
+    expect(codecForHeight(720)).toBe("avc1.42001f");
+    expect(codecForHeight(480)).toBe("avc1.42001f");
+  });
+
+  it("uses Baseline L4.0 (420028) for 1080p and above", () => {
+    expect(codecForHeight(1080)).toBe("avc1.420028");
+    expect(codecForHeight(721)).toBe("avc1.420028");
+    expect(codecForHeight(2160)).toBe("avc1.420028");
+  });
+});
+
+describe("bitrateForHeight", () => {
+  it("scales bitrate with resolution", () => {
+    expect(bitrateForHeight(720)).toBe(8_000_000);
+    expect(bitrateForHeight(1080)).toBe(14_000_000);
   });
 });

@@ -86,10 +86,6 @@ export class Renderer {
   private uWmTex: WebGLUniformLocation | null = null;
   private uWmAlpha: WebGLUniformLocation | null = null;
 
-  // Deterministic frame counter (drives shake jitter when deterministic, so an
-  // export is reproducible rather than wall-clock dependent).
-  private detFrame = 0;
-
   private rafId = 0;
   private running = false;
   private lastTime = 0;
@@ -453,8 +449,6 @@ export class Renderer {
     }
 
     this.post.end(this.bloomStrength);
-
-    if (deterministic) this.detFrame++;
 
     // Watermark (export-only) drawn last, directly over the composited frame.
     if (this.watermark) this.drawWatermark();

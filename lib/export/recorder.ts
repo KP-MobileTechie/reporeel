@@ -79,6 +79,33 @@ export function pickEncoder(env: {
   return "none";
 }
 
+// ── Pure: codec level + bitrate selection ───────────────────────────────────
+
+/**
+ * Pick an H.264 (AVC) codec string whose level is high enough for the target
+ * frame height. The hardcoded `avc1.42001f` (Baseline Level 3.1) tops out around
+ * 720p (1280×720@30); strict encoders REJECT 1080p at L3.1. So:
+ *   - height <= 720  → `avc1.42001f`  (Baseline L3.1: ok up to ~720p)
+ *   - height <= 1080 → `avc1.420028`  (Baseline L4.0: ok up to 1080p)
+ *   - taller         → `avc1.420028`  (L4.0 default; nothing taller is offered)
+ * The two strings form an ascending ladder used by exportWebCodecs to retry a
+ * lower level if isConfigSupported rejects the first pick.
+ */
+export function codecForHeight(height: number): string {
+  if (height <= 720) return "avc1.42001f"; // Baseline Level 3.1
+  return "avc1.420028"; // Baseline Level 4.0 (covers 1080p)
+}
+
+/**
+ * Target bitrate (bits/s) for a given height. Scaled with resolution so 1080p
+ * isn't starved at the 720p budget: ~8 Mbps for <=720p, ~14 Mbps for <=1080p.
+ * These are deliberate quality/size trade-offs for short (30–90s) reels.
+ */
+export function bitrateForHeight(height: number): number {
+  if (height <= 720) return 8_000_000; // ~8 Mbps
+  return 14_000_000; // ~14 Mbps for 1080p
+}
+
 // ── Impure: capability probe ────────────────────────────────────────────────
 
 /** Detect export capabilities in the current browser. */
@@ -173,13 +200,54 @@ export async function exportWebCodecs(opts: ExportOpts): Promise<boolean> {
     },
   });
 
-  encoder.configure({
-    codec: "avc1.42001f", // H.264 baseline, level 3.1
-    width: opts.width,
-    height: opts.height,
-    bitrate: 8_000_000,
-    framerate: fps,
-  });
+  // Resolution-aware codec level. Build an ascending ladder of candidate
+  // levels (the height-appropriate pick first, then any lower fallbacks) and
+  // probe each via isConfigSupported, configuring the first one the browser's
+  // encoder accepts. If none are supported we throw a clear, modal-surfaceable
+  // error rather than letting configure() blow up opaquely.
+  const bitrate = bitrateForHeight(opts.height);
+  const preferred = codecForHeight(opts.height);
+  // Candidates: preferred first, then every strictly-lower level on the ladder.
+  const ladder = ["avc1.42001f", "avc1.420028"];
+  const candidates = [
+    preferred,
+    ...ladder.slice(0, ladder.indexOf(preferred)).reverse(),
+  ];
+
+  let configured = false;
+  for (const codec of candidates) {
+    const config: VideoEncoderConfig = {
+      codec,
+      width: opts.width,
+      height: opts.height,
+      bitrate,
+      framerate: fps,
+    };
+    let supported = true;
+    if (typeof VideoEncoder.isConfigSupported === "function") {
+      try {
+        const res = await VideoEncoder.isConfigSupported(config);
+        supported = !!res.supported;
+      } catch {
+        supported = false;
+      }
+    }
+    if (supported) {
+      encoder.configure(config);
+      configured = true;
+      break;
+    }
+  }
+  if (!configured) {
+    try {
+      encoder.close();
+    } catch {
+      /* already closed */
+    }
+    throw new Error(
+      "this resolution isn't supported by your browser's encoder; try 720p"
+    );
+  }
 
   let aborted = false;
   for (let i = 0; i < plan.frameCount; i++) {
@@ -200,8 +268,22 @@ export async function exportWebCodecs(opts: ExportOpts): Promise<boolean> {
 
     opts.onProgress?.((i + 1) / plan.frameCount);
 
-    // Yield periodically so the encode queue drains and the UI can update.
-    if (i % 10 === 9) await new Promise((r) => setTimeout(r, 0));
+    // Backpressure gate. A long (e.g. 2700-frame) export at 1080p can enqueue
+    // frames faster than the encoder drains them, ballooning encodeQueueSize and
+    // memory. Instead of a fixed every-N-frames yield, block here whenever the
+    // queue exceeds a small threshold and resume once it drains below it. The
+    // threshold (16) keeps the pipeline fed without letting the backlog grow
+    // unbounded. Always break on abort or encoder error so we never spin.
+    const MAX_QUEUE = 16;
+    while (encoder.encodeQueueSize > MAX_QUEUE) {
+      if (opts.shouldAbort?.()) {
+        aborted = true;
+        break;
+      }
+      if (encoderError) throw encoderError;
+      await new Promise((r) => setTimeout(r));
+    }
+    if (aborted) break;
   }
 
   if (aborted) {
@@ -257,7 +339,10 @@ export async function exportMediaRecorder(opts: ExportOpts): Promise<boolean> {
     recorder.onstop = () => resolve();
   });
 
-  recorder.start();
+  // Pass a 1s timeslice so engines that only emit `dataavailable` when given a
+  // timeslice still flush chunks periodically (some only fire once at stop()
+  // otherwise, or not at all).
+  recorder.start(1000);
 
   let aborted = false;
   for (let i = 0; i < plan.frameCount; i++) {
