@@ -1,0 +1,513 @@
+{
+  "repo": {
+    "name": "sample-repo",
+    "source": "demo"
+  },
+  "commits": [
+    {
+      "hash": "c0000",
+      "author": "Grace Hopper",
+      "date": 1676365200000,
+      "message": "initial scaffold",
+      "changes": [
+        {
+          "path": "src/ui/theme.css",
+          "type": "add",
+          "delta": 24
+        }
+      ]
+    },
+    {
+      "hash": "c0001",
+      "author": "Linus T.",
+      "date": 1677402000000,
+      "message": "add core types",
+      "changes": [
+        {
+          "path": "docs/README.md",
+          "type": "add",
+          "delta": 109
+        },
+        {
+          "path": "lib/math.ts",
+          "type": "add",
+          "delta": 175
+        },
+        {
+          "path": "lib/format.ts",
+          "type": "add",
+          "delta": 36
+        }
+      ]
+    },
+    {
+      "hash": "c0002",
+      "author": "Linus T.",
+      "date": 1677945600000,
+      "message": "wire up parser",
+      "changes": [
+        {
+          "path": "lib/format.ts",
+          "type": "modify",
+          "delta": 71
+        },
+        {
+          "path": "src/ui/Button.tsx",
+          "type": "add",
+          "delta": 189
+        },
+        {
+          "path": "docs/README.md",
+          "type": "modify",
+          "delta": 104
+        }
+      ]
+    },
+    {
+      "hash": "c0003",
+      "author": "Ada Lovelace",
+      "date": 1679043600000,
+      "message": "build button component",
+      "changes": [
+        {
+          "path": "docs/README.md",
+          "type": "modify",
+          "delta": 86
+        },
+        {
+          "path": "src/ui/theme.css",
+          "type": "modify",
+          "delta": 88
+        }
+      ]
+    },
+    {
+      "hash": "c0004",
+      "author": "Linus T.",
+      "date": 1680616800000,
+      "message": "modal + focus trap",
+      "changes": [
+        {
+          "path": "src/app.ts",
+          "type": "add",
+          "delta": 54
+        },
+        {
+          "path": "src/ui/icons.tsx",
+          "type": "add",
+          "delta": 42
+        }
+      ]
+    },
+    {
+      "hash": "c0005",
+      "author": "Linus T.",
+      "date": 1682254800000,
+      "message": "theme tokens",
+      "changes": [
+        {
+          "path": "src/ui/Button.tsx",
+          "type": "modify",
+          "delta": 7
+        },
+        {
+          "path": "src/ui/Modal.tsx",
+          "type": "add",
+          "delta": 80
+        }
+      ]
+    },
+    {
+      "hash": "c0006",
+      "author": "Ada Lovelace",
+      "date": 1684166400000,
+      "message": "format helpers",
+      "changes": [
+        {
+          "path": "lib/format.ts",
+          "type": "modify",
+          "delta": 42
+        },
+        {
+          "path": "src/app.ts",
+          "type": "modify",
+          "delta": 17
+        },
+        {
+          "path": "docs/guide.md",
+          "type": "add",
+          "delta": 165
+        }
+      ]
+    },
+    {
+      "hash": "c0007",
+      "author": "Ada Lovelace",
+      "date": 1685196000000,
+      "message": "math utilities",
+      "changes": [
+        {
+          "path": "lib/parse.ts",
+          "type": "add",
+          "delta": 41
+        }
+      ]
+    },
+    {
+      "hash": "c0008",
+      "author": "Linus T.",
+      "date": 1685883600000,
+      "message": "persistent store",
+      "changes": [
+        {
+          "path": "src/ui/Button.tsx",
+          "type": "modify",
+          "delta": 88
+        },
+        {
+          "path": "docs/guide.md",
+          "type": "modify",
+          "delta": 88
+        }
+      ]
+    },
+    {
+      "hash": "c0009",
+      "author": "Ada Lovelace",
+      "date": 1687694400000,
+      "message": "docs: readme",
+      "changes": [
+        {
+          "path": "lib/format.ts",
+          "type": "modify",
+          "delta": 123
+        }
+      ]
+    },
+    {
+      "hash": "c0010",
+      "author": "Grace Hopper",
+      "date": 1688738400000,
+      "message": "docs: guide",
+      "changes": [
+        {
+          "path": "src/app.ts",
+          "type": "modify",
+          "delta": 122
+        }
+      ]
+    },
+    {
+      "hash": "c0011",
+      "author": "Grace Hopper",
+      "date": 1690452000000,
+      "message": "refactor app entry",
+      "changes": [
+        {
+          "path": "lib/parse.ts",
+          "type": "modify",
+          "delta": 114
+        }
+      ]
+    },
+    {
+      "hash": "c0012",
+      "author": "Grace Hopper",
+      "date": 1691060400000,
+      "message": "fix parser edge case",
+      "changes": [
+        {
+          "path": "src/ui/icons.tsx",
+          "type": "delete",
+          "delta": 0
+        }
+      ]
+    },
+    {
+      "hash": "c0013",
+      "author": "Grace Hopper",
+      "date": 1692529200000,
+      "message": "add icon set",
+      "changes": [
+        {
+          "path": "lib/format.ts",
+          "type": "modify",
+          "delta": 71
+        }
+      ]
+    },
+    {
+      "hash": "c0014",
+      "author": "Grace Hopper",
+      "date": 1693908000000,
+      "message": "api reference",
+      "changes": [
+        {
+          "path": "docs/api.md",
+          "type": "add",
+          "delta": 62
+        },
+        {
+          "path": "docs/guide.md",
+          "type": "modify",
+          "delta": 73
+        }
+      ]
+    },
+    {
+      "hash": "c0015",
+      "author": "Ada Lovelace",
+      "date": 1695891600000,
+      "message": "tidy utils",
+      "changes": [
+        {
+          "path": "lib/parse.ts",
+          "type": "modify",
+          "delta": 122
+        },
+        {
+          "path": "lib/store.ts",
+          "type": "add",
+          "delta": 166
+        }
+      ]
+    },
+    {
+      "hash": "c0016",
+      "author": "Linus T.",
+      "date": 1696683600000,
+      "message": "tune store cache",
+      "changes": [
+        {
+          "path": "src/ui/theme.css",
+          "type": "modify",
+          "delta": 96
+        }
+      ]
+    },
+    {
+      "hash": "c0017",
+      "author": "Grace Hopper",
+      "date": 1698742800000,
+      "message": "polish modal",
+      "changes": [
+        {
+          "path": "lib/math.ts",
+          "type": "modify",
+          "delta": 61
+        }
+      ]
+    },
+    {
+      "hash": "c0018",
+      "author": "Grace Hopper",
+      "date": 1699452000000,
+      "message": "rename helper",
+      "changes": [
+        {
+          "path": "docs/README.md",
+          "type": "modify",
+          "delta": 113
+        }
+      ]
+    },
+    {
+      "hash": "c0019",
+      "author": "Linus T.",
+      "date": 1701090000000,
+      "message": "drop dead code",
+      "changes": [
+        {
+          "path": "lib/math.ts",
+          "type": "modify",
+          "delta": 11
+        },
+        {
+          "path": "lib/format.ts",
+          "type": "modify",
+          "delta": 34
+        },
+        {
+          "path": "lib/util.ts",
+          "type": "add",
+          "delta": 24
+        }
+      ]
+    },
+    {
+      "hash": "c0020",
+      "author": "Grace Hopper",
+      "date": 1703073600000,
+      "message": "perf: format",
+      "changes": [
+        {
+          "path": "lib/format.ts",
+          "type": "delete",
+          "delta": 0
+        },
+        {
+          "path": "src/ui/icons.tsx",
+          "type": "add",
+          "delta": 126
+        }
+      ]
+    },
+    {
+      "hash": "c0021",
+      "author": "Ada Lovelace",
+      "date": 1703412000000,
+      "message": "add config",
+      "changes": [
+        {
+          "path": "src/ui/Modal.tsx",
+          "type": "modify",
+          "delta": 56
+        }
+      ]
+    },
+    {
+      "hash": "c0022",
+      "author": "Grace Hopper",
+      "date": 1705500000000,
+      "message": "extend math",
+      "changes": [
+        {
+          "path": "lib/store.ts",
+          "type": "modify",
+          "delta": 114
+        },
+        {
+          "path": "docs/guide.md",
+          "type": "modify",
+          "delta": 83
+        }
+      ]
+    },
+    {
+      "hash": "c0023",
+      "author": "Ada Lovelace",
+      "date": 1707138000000,
+      "message": "button variants",
+      "changes": [
+        {
+          "path": "src/ui/Button.tsx",
+          "type": "modify",
+          "delta": 46
+        }
+      ]
+    },
+    {
+      "hash": "c0024",
+      "author": "Grace Hopper",
+      "date": 1708182000000,
+      "message": "guide examples",
+      "changes": [
+        {
+          "path": "src/ui/Modal.tsx",
+          "type": "modify",
+          "delta": 56
+        },
+        {
+          "path": "src/ui/theme.css",
+          "type": "modify",
+          "delta": 67
+        },
+        {
+          "path": "lib/util.ts",
+          "type": "modify",
+          "delta": 37
+        }
+      ]
+    },
+    {
+      "hash": "c0025",
+      "author": "Linus T.",
+      "date": 1709913600000,
+      "message": "stabilize store",
+      "changes": [
+        {
+          "path": "src/config.json",
+          "type": "add",
+          "delta": 125
+        },
+        {
+          "path": "lib/parse.ts",
+          "type": "modify",
+          "delta": 6
+        },
+        {
+          "path": "src/ui/icons.tsx",
+          "type": "delete",
+          "delta": 0
+        }
+      ]
+    },
+    {
+      "hash": "c0026",
+      "author": "Grace Hopper",
+      "date": 1711706400000,
+      "message": "cleanup imports",
+      "changes": [
+        {
+          "path": "lib/store.ts",
+          "type": "modify",
+          "delta": 19
+        },
+        {
+          "path": "lib/parse.ts",
+          "type": "modify",
+          "delta": 116
+        },
+        {
+          "path": "src/config.json",
+          "type": "modify",
+          "delta": 102
+        }
+      ]
+    },
+    {
+      "hash": "c0027",
+      "author": "Ada Lovelace",
+      "date": 1713798000000,
+      "message": "final polish",
+      "changes": [
+        {
+          "path": "lib/util.ts",
+          "type": "modify",
+          "delta": 109
+        }
+      ]
+    },
+    {
+      "hash": "c0028",
+      "author": "Linus T.",
+      "date": 1715590800000,
+      "message": "release prep",
+      "changes": [
+        {
+          "path": "lib/math.ts",
+          "type": "modify",
+          "delta": 111
+        },
+        {
+          "path": "lib/util.ts",
+          "type": "modify",
+          "delta": 58
+        }
+      ]
+    },
+    {
+      "hash": "c0029",
+      "author": "Grace Hopper",
+      "date": 1716292800000,
+      "message": "tag v1.0",
+      "changes": [
+        {
+          "path": "src/config.json",
+          "type": "modify",
+          "delta": 21
+        }
+      ]
+    }
+  ]
+}
