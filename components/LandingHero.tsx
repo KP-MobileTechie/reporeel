@@ -21,19 +21,35 @@ export function LandingHero({
 }) {
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-end">
-      {/* gradient scrim: dark at bottom, fading up, keeps hero text readable */}
-      <div className="absolute inset-0 bg-gradient-to-t from-bg via-bg/70 to-transparent" />
+      {/* Layered scrim: a soft radial glow behind the hero text plus a bottom-up
+          dark gradient, so the headline stays legible over the live galaxy. */}
+      <div className="absolute inset-0 bg-gradient-to-t from-bg via-bg/75 to-transparent" />
+      <div
+        className="absolute inset-x-0 bottom-0 h-[70vh]"
+        style={{
+          background:
+            "radial-gradient(60% 80% at 50% 100%, color-mix(in srgb, var(--bg) 92%, transparent), transparent 70%)",
+        }}
+      />
 
-      <div className="pointer-events-auto relative z-10 mb-[12vh] flex w-full max-w-2xl flex-col items-center px-6 text-center">
-        <h1 className="text-5xl font-bold tracking-tight text-fg sm:text-6xl">
+      <div className="pointer-events-auto relative z-10 mb-[14vh] flex w-full max-w-2xl flex-col items-center px-6 text-center">
+        <p className="mb-5 text-sm font-medium tracking-[0.25em] text-fg-dim uppercase">
           Repo<span className="text-accent">Reel</span>
+        </p>
+
+        <h1 className="text-balance text-4xl font-bold leading-[1.05] tracking-tight text-fg sm:text-6xl">
+          Watch your codebase{" "}
+          <span className="bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">
+            being born
+          </span>
+          .
         </h1>
-        <p className="mt-3 text-xl text-fg">Watch your codebase being born.</p>
-        <p className="mt-1 text-sm text-fg-dim">
+
+        <p className="mt-5 text-base text-fg-dim sm:text-lg">
           Any repo. 100% in your browser. Nothing uploaded.
         </p>
 
-        <div className="mt-8 flex w-full justify-center">
+        <div className="mt-10 flex w-full justify-center">
           <InputRow
             demos={demos}
             busy={busy}
@@ -44,6 +60,10 @@ export function LandingHero({
             onContinuePartial={onContinuePartial}
           />
         </div>
+
+        <p className="mt-8 text-xs tracking-wide text-fg-dim/80">
+          open source · no tracking · no sign-up
+        </p>
       </div>
     </div>
   );

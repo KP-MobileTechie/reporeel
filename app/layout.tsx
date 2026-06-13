@@ -7,11 +7,29 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
+const SITE_URL = "https://reporeel.vercel.app";
+const TITLE = "RepoReel — watch your codebase being born";
+const DESCRIPTION =
+  "Turn any git history into a cinematic galaxy: every file a star, every commit a supernova, every author a comet. 100% in your browser, nothing uploaded.";
+
 export const metadata: Metadata = {
-  title: "RepoReel: watch your codebase being born",
-  description:
-    "Turn your git history into a cinematic galaxy: every file a star, every commit a supernova, every author a comet blazing through your codebase.",
-  metadataBase: new URL("https://reporeel.vercel.app"),
+  title: TITLE,
+  description: DESCRIPTION,
+  metadataBase: new URL(SITE_URL),
+  openGraph: {
+    type: "website",
+    url: SITE_URL,
+    siteName: "RepoReel",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "RepoReel" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: ["/og.png"],
+  },
 };
 
 export default function RootLayout({

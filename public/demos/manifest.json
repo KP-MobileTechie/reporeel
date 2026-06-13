@@ -1,1 +1,27 @@
-[{ "id": "sample", "label": "Sample repo", "file": "sample.json" }]
+[
+  {
+    "id": "reporeel",
+    "label": "RepoReel",
+    "file": "reporeel.json"
+  },
+  {
+    "id": "chalk",
+    "label": "Chalk",
+    "file": "chalk.json"
+  },
+  {
+    "id": "linkdeck",
+    "label": "Linkdeck",
+    "file": "linkdeck.json"
+  },
+  {
+    "id": "dropfour",
+    "label": "Dropfour",
+    "file": "dropfour.json"
+  },
+  {
+    "id": "splitwisely",
+    "label": "Splitwisely",
+    "file": "splitwisely.json"
+  }
+]

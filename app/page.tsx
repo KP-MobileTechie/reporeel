@@ -65,9 +65,9 @@ export default function Home() {
       .catch(() => setDemos([]));
   }, []);
 
-  // ── Load the sample demo for the landing background ───────────────────
+  // ── Load the landing-background demo (a real baked galaxy) ────────────
   useEffect(() => {
-    fetch("/demos/sample.json")
+    fetch("/demos/reporeel.json")
       .then((r) => r.json())
       .then((j) => setSampleTimeline(loadDemo(j)))
       .catch(() => setSampleTimeline(null));
