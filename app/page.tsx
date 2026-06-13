@@ -6,6 +6,7 @@ import { TimelineBar } from "@/components/TimelineBar";
 import { StatsOverlay, type Stats } from "@/components/StatsOverlay";
 import { Leaderboard, type LeaderRow } from "@/components/Leaderboard";
 import { ThemePicker } from "@/components/ThemePicker";
+import { ExportModal } from "@/components/ExportModal";
 import type { DemoEntry, LocalFiles } from "@/components/InputRow";
 import { useGalaxy } from "@/lib/useGalaxy";
 import { loadDemo } from "@/lib/git/demo";
@@ -35,6 +36,9 @@ export default function Home() {
   const [progress, setProgress] = useState<LoadProgress | null>(null);
   const [demos, setDemos] = useState<DemoEntry[]>([]);
   const [rateLimit, setRateLimit] = useState<{ commitsLoaded: number; partial: CommitTimeline } | null>(null);
+  // Active demo id (for the share link in the export modal). Set when a demo is
+  // loaded; cleared for github/local timelines.
+  const [demoId, setDemoId] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -102,6 +106,7 @@ export default function Home() {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
+      setDemoId(null);
       setRateLimit(null);
       setProgress({ source: "github", done: 0, total: 0 });
       setState("loading");
@@ -133,6 +138,7 @@ export default function Home() {
 
   const loadLocal = useCallback(
     (lf: LocalFiles) => {
+      setDemoId(null);
       setProgress({ source: "local", done: 0, total: 0 });
       setState("loading");
       cancelLocalRef.current?.();
@@ -158,6 +164,7 @@ export default function Home() {
     async (id: string) => {
       const entry = demos.find((d) => d.id === id);
       if (!entry) return;
+      setDemoId(id);
       setState("loading");
       setProgress({ source: "local", done: 0, total: 0 });
       try {
@@ -241,6 +248,7 @@ export default function Home() {
         <Theater
           handle={handle}
           repoName={timeline?.repo.name ?? "repository"}
+          demoId={demoId}
           theme={theme}
           onTheme={setTheme}
           onExit={reset}
@@ -317,16 +325,19 @@ function ErrorView({ message, onRetry }: { message: string; onRetry: () => void 
 function Theater({
   handle,
   repoName,
+  demoId,
   theme,
   onTheme,
   onExit,
 }: {
   handle: NonNullable<ReturnType<typeof useGalaxy>["handle"]>;
   repoName: string;
+  demoId: string | null;
   theme: Theme;
   onTheme: (t: Theme) => void;
   onExit: () => void;
 }) {
+  const [exportOpen, setExportOpen] = useState(false);
   const { timeline } = handle;
   const degenerate = timeline.t1 <= timeline.t0;
 
@@ -463,14 +474,32 @@ function Theater({
       <div className="absolute right-4 top-4 z-10 flex flex-col items-end gap-2">
         <ThemePicker theme={theme} onChange={onTheme} />
         <Leaderboard rows={leaders} />
-        <button
-          type="button"
-          onClick={onExit}
-          className="pointer-events-auto rounded-lg bg-black/40 px-3 py-1.5 text-xs text-fg-dim backdrop-blur hover:text-fg"
-        >
-          ← new repo
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setExportOpen(true)}
+            className="pointer-events-auto rounded-lg bg-black/40 px-3 py-1.5 text-xs text-fg-dim backdrop-blur hover:text-fg"
+          >
+            Export video
+          </button>
+          <button
+            type="button"
+            onClick={onExit}
+            className="pointer-events-auto rounded-lg bg-black/40 px-3 py-1.5 text-xs text-fg-dim backdrop-blur hover:text-fg"
+          >
+            ← new repo
+          </button>
+        </div>
       </div>
+
+      {exportOpen && (
+        <ExportModal
+          handle={handle}
+          repoName={repoName}
+          demoId={demoId}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
 
       {/* Bottom timeline */}
       <div className="absolute inset-x-4 bottom-4 z-10">

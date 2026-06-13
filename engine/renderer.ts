@@ -20,6 +20,7 @@ import { Camera } from "./camera";
 import { StarField } from "./stars";
 import { Effects } from "./effects";
 import { BloomPipeline, type BloomQuality } from "./post";
+import { WATERMARK_VERT, WATERMARK_FRAG, compileProgram } from "./shaders";
 
 export class WebGLUnsupportedError extends Error {
   constructor(message = "WebGL2 is not supported in this browser") {
@@ -39,7 +40,11 @@ export class Renderer {
   private readonly starField: StarField;
   private readonly effects: Effects;
   private readonly post: BloomPipeline;
-  private readonly resizeObserver: ResizeObserver;
+  private readonly resizeObserver: ResizeObserver | null;
+
+  // Offscreen export renderers manage their own fixed backing-store size and
+  // skip DOM-bound resize/interaction wiring (the canvas is not in the page).
+  private readonly offscreen: boolean;
 
   // Staged scene data (latest wins; drawn every frame).
   private positions: Float32Array | null = null;
@@ -66,6 +71,25 @@ export class Renderer {
 
   private clear: [number, number, number] = [0.02, 0.02, 0.05];
 
+  // ── Watermark (export-only) ───────────────────────────────────────────────
+  // When `watermark` is on, a "reporeel" wordmark is drawn bottom-right after
+  // the post composite. The program + alpha texture are created lazily on first
+  // enable so the live theater (watermark off) pays nothing. Live path keeps it
+  // off; the export path turns it on.
+  private watermark = false;
+  private watermarkProgram: WebGLProgram | null = null;
+  private watermarkTex: WebGLTexture | null = null;
+  private watermarkVao: WebGLVertexArrayObject | null = null;
+  private watermarkAspect = 1; // texture width/height, for clip-space sizing
+  private uWmOffset: WebGLUniformLocation | null = null;
+  private uWmScale: WebGLUniformLocation | null = null;
+  private uWmTex: WebGLUniformLocation | null = null;
+  private uWmAlpha: WebGLUniformLocation | null = null;
+
+  // Deterministic frame counter (drives shake jitter when deterministic, so an
+  // export is reproducible rather than wall-clock dependent).
+  private detFrame = 0;
+
   private rafId = 0;
   private running = false;
   private lastTime = 0;
@@ -90,12 +114,26 @@ export class Renderer {
   private readonly onWheel: (e: WheelEvent) => void;
   private readonly onDblClick: () => void;
 
-  constructor(canvas: HTMLCanvasElement) {
+  /**
+   * @param canvas    target canvas (a DOM canvas for the live theater, or an
+   *                  offscreen export canvas sized to the target resolution).
+   * @param offscreen when true, the renderer is an export renderer: it does NOT
+   *                  attach a ResizeObserver or pointer/wheel handlers (the
+   *                  canvas is not in the DOM and its backing-store size is
+   *                  fixed by the caller), and the GL viewport/post pipeline are
+   *                  sized once to the canvas's width/height. Used by the
+   *                  deterministic export path (see renderAt).
+   */
+  constructor(canvas: HTMLCanvasElement, offscreen = false) {
     this.canvas = canvas;
+    this.offscreen = offscreen;
     const gl = canvas.getContext("webgl2", {
       antialias: false,
       alpha: false,
       powerPreference: "high-performance",
+      // Export reads pixels back via VideoFrame(canvas); preserve so the drawn
+      // buffer is still valid when WebCodecs samples the canvas.
+      preserveDrawingBuffer: offscreen,
     });
     if (!gl) throw new WebGLUnsupportedError();
     this.gl = gl;
@@ -115,6 +153,23 @@ export class Renderer {
       // Full GL resource re-creation on restore is out of scope; a page
       // reload recovers cleanly — TODO if it ever matters in practice.
     };
+
+    // Offscreen export renderers: size the GL viewport + post pipeline once to
+    // the fixed canvas backing store and skip all DOM-bound wiring.
+    if (offscreen) {
+      this.resizeObserver = null;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      this.post.resize(canvas.width, canvas.height);
+      // Unused handlers (kept non-null to satisfy the readonly fields); never
+      // attached because the canvas is not in the DOM.
+      this.onPointerDown = () => {};
+      this.onPointerMove = () => {};
+      this.onPointerUp = () => {};
+      this.onWheel = () => {};
+      this.onDblClick = () => {};
+      return;
+    }
+
     canvas.addEventListener("webglcontextlost", this.onContextLostHandler);
     canvas.addEventListener("webglcontextrestored", this.onContextRestoredHandler);
 
@@ -284,9 +339,51 @@ export class Renderer {
       }
     }
 
-    // Newly activated supernovas shake the camera once (magnitude > 0.6).
+    this.drawCore(dt, now - this.startTime, false);
+  }
+
+  /**
+   * Render exactly ONE deterministic frame of the given scene/layout/colors,
+   * synchronously, into this renderer's canvas. Used by the offscreen export
+   * path: the caller stages each planned frame (scene + the SAME static layout
+   * snapshot from the live galaxy) and reads the canvas back into a VideoFrame.
+   *
+   * Determinism contract (vs the live frame()):
+   *   - The camera does NOT auto-drift (framing is fixed by the caller before
+   *     the export loop). Camera inertia is not advanced.
+   *   - Supernova shake is suppressed (no wall-clock / accumulation coupling);
+   *     a deterministic counter advances effects only.
+   *   - No FPS / auto-quality mutation. The post pipeline runs at the current
+   *     quality (set by the caller).
+   *   - effects.update uses the passed `dt` (a fixed per-frame step, e.g.
+   *     1000/fps) so trails/animation advance reproducibly per frame index.
+   */
+  renderAt(
+    scene: SceneState,
+    layout: LayoutFrame,
+    colors: Float32Array,
+    opts: { dt: number; deterministic?: boolean }
+  ): void {
+    this.setScene(scene, layout, colors);
+    const deterministic = opts.deterministic !== false;
+    // Drive effects/animation by the supplied dt; pass elapsed=0 since auto-drift
+    // is suppressed in deterministic mode (the elapsed arg is unused then).
+    this.drawCore(opts.dt, 0, deterministic);
+  }
+
+  /**
+   * The single draw core shared by the live rAF loop (frame) and the
+   * deterministic export path (renderAt). `dt` is the time step fed to
+   * effects.update and camera inertia. `elapsed` is wall-time since start, used
+   * only for camera auto-drift in the live path. When `deterministic`, camera
+   * auto-drift and supernova-shake are suppressed and effects advance via a
+   * frame counter, so the same inputs always produce the same pixels.
+   */
+  private drawCore(dt: number, elapsed: number, deterministic: boolean): void {
     const scene = this.scene;
-    if (scene) {
+
+    if (!deterministic && scene) {
+      // Newly activated supernovas shake the camera once (magnitude > 0.6).
       // If scene time jumped backward (scrub/seek), reset the seen-set so future
       // forward playback re-triggers shakes.
       if (scene.t < this.lastSceneT) this.shakenSupernovas.clear();
@@ -306,9 +403,13 @@ export class Renderer {
       if (this.shakenSupernovas.size > 512) this.shakenSupernovas.clear();
     }
 
-    // Camera motion.
-    this.camera.update(dt);
-    this.camera.autoDrift(now - this.startTime);
+    // Camera motion. Deterministic export keeps a fixed framing: no inertia, no
+    // auto-drift, no shake jitter advance (shake amplitude stays whatever it is,
+    // which is 0 because we never shake in deterministic mode).
+    if (!deterministic) {
+      this.camera.update(dt);
+      this.camera.autoDrift(elapsed);
+    }
 
     // Upload staged data if it changed.
     if (
@@ -348,15 +449,109 @@ export class Renderer {
         this.positions,
         dt
       );
-      this.effects.draw(view, scene ? scene.t : now);
+      this.effects.draw(view, scene ? scene.t : 0);
     }
 
     this.post.end(this.bloomStrength);
+
+    if (deterministic) this.detFrame++;
+
+    // Watermark (export-only) drawn last, directly over the composited frame.
+    if (this.watermark) this.drawWatermark();
+  }
+
+  /**
+   * Enable/disable the export watermark. Live theater leaves this off; the
+   * export path turns it on so exported videos carry the "reporeel" wordmark.
+   * The GL program + texture are created lazily on first enable.
+   */
+  setWatermark(on: boolean): void {
+    this.watermark = on;
+    if (on && !this.watermarkProgram) this.initWatermark();
+  }
+
+  private initWatermark(): void {
+    const gl = this.gl;
+    // Render the wordmark into a 2D canvas once, upload as an RGBA texture.
+    const cw = 256;
+    const ch = 64;
+    const c = document.createElement("canvas");
+    c.width = cw;
+    c.height = ch;
+    const ctx = c.getContext("2d")!;
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.font = "600 40px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("reporeel", cw - 8, ch / 2 + 2);
+    this.watermarkAspect = cw / ch;
+
+    const tex = gl.createTexture();
+    if (!tex) return;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    this.watermarkTex = tex;
+
+    this.watermarkProgram = compileProgram(gl, WATERMARK_VERT, WATERMARK_FRAG);
+    const vao = gl.createVertexArray();
+    this.watermarkVao = vao;
+    this.uWmOffset = gl.getUniformLocation(this.watermarkProgram, "u_offset");
+    this.uWmScale = gl.getUniformLocation(this.watermarkProgram, "u_scale");
+    this.uWmTex = gl.getUniformLocation(this.watermarkProgram, "u_tex");
+    this.uWmAlpha = gl.getUniformLocation(this.watermarkProgram, "u_alpha");
+  }
+
+  private drawWatermark(): void {
+    const gl = this.gl;
+    const prog = this.watermarkProgram;
+    const tex = this.watermarkTex;
+    if (!prog || !tex || !this.watermarkVao) return;
+
+    // Size: target ~16% of canvas width, preserving the wordmark aspect.
+    const cw = this.canvas.width;
+    const chh = this.canvas.height;
+    const wPx = cw * 0.16;
+    const hPx = wPx / this.watermarkAspect;
+    const sx = wPx / cw; // clip half-extent x
+    const sy = hPx / chh; // clip half-extent y
+    const margin = 0.03;
+    const ox = 1 - sx - margin; // bottom-right
+    const oy = -1 + sy + margin;
+
+    gl.useProgram(prog);
+    gl.bindVertexArray(this.watermarkVao);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(this.uWmTex, 0);
+    gl.uniform2f(this.uWmOffset, ox, oy);
+    gl.uniform2f(this.uWmScale, sx, sy);
+    gl.uniform1f(this.uWmAlpha, 0.4);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Restore GL state contract defaults.
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.useProgram(null);
+    gl.bindVertexArray(null);
   }
 
   dispose(): void {
     this.stop();
-    this.resizeObserver.disconnect();
+    this.resizeObserver?.disconnect();
+    if (this.watermarkProgram) this.gl.deleteProgram(this.watermarkProgram);
+    if (this.watermarkTex) this.gl.deleteTexture(this.watermarkTex);
+    if (this.watermarkVao) this.gl.deleteVertexArray(this.watermarkVao);
     const c = this.canvas;
     c.removeEventListener("pointerdown", this.onPointerDown);
     c.removeEventListener("pointermove", this.onPointerMove);

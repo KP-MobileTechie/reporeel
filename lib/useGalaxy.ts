@@ -60,15 +60,123 @@ export function seedFromName(name: string): number {
   return h >>> 0;
 }
 
+/**
+ * An isolated, deterministic frame renderer for video export. Built from the
+ * CURRENT galaxy (live timeline + colors + the latest layout snapshot) on its
+ * own offscreen canvas + Renderer at the requested resolution, so it never
+ * fights the live theater for the GL context. Camera framing is FIXED to the
+ * snapshot's bounds for the whole export (no auto-drift), and the "reporeel"
+ * watermark is enabled. `renderFrameAt(t, dt)` samples the prepared timeline at
+ * `t`, draws one deterministic frame, and returns the canvas to read back.
+ */
+export interface ExportFrameRenderer {
+  renderFrameAt(t: number, dt: number): HTMLCanvasElement;
+  readonly canvas: HTMLCanvasElement;
+  dispose(): void;
+}
+
 export interface GalaxyHandle {
   /** Latest built timeline (for overlays: name, supernovas, etc.). */
   readonly timeline: Timeline;
+  /** Repo identity for share links / filenames (name, owner?, source). */
+  readonly repo: CommitTimeline["repo"];
   /** Read the live playback state (mutable ref target; copy if retaining). */
   getPlayback(): PlaybackState;
   play(): void;
   pause(): void;
   setSpeed(speed: number): void;
   seek(t: number): void;
+  /**
+   * Build an offscreen deterministic frame renderer for export at the given
+   * resolution, using the galaxy's current shape (a snapshot of the live layout
+   * positions, held static for every exported frame) and current theme colors.
+   * Returns null if WebGL2 is unavailable on the offscreen canvas. Caller MUST
+   * call .dispose() when done.
+   */
+  createExportRenderer(width: number, height: number): ExportFrameRenderer | null;
+}
+
+/**
+ * Build the offscreen deterministic export renderer (module-level so it can be
+ * unit-reasoned in isolation from the hook). Snapshots the supplied layout
+ * positions and holds them static for every exported frame, so the exported
+ * galaxy is exactly the theater's CURRENT shape. The camera is fixed framing the
+ * snapshot's bounds (no auto-drift): we center on the bounds centroid and pick a
+ * zoom that fits the bounds with margin into the export resolution.
+ */
+function buildExportRenderer(
+  width: number,
+  height: number,
+  ctx: {
+    prepared: ReturnType<typeof prepare>;
+    colors: Float32Array;
+    deaths: Float64Array;
+    layout: LayoutFrame;
+    theme: Theme;
+  },
+): ExportFrameRenderer | null {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  let renderer: Renderer;
+  try {
+    renderer = new Renderer(canvas, /* offscreen */ true);
+  } catch {
+    return null; // WebGL2 unavailable on the offscreen canvas
+  }
+
+  // Static snapshot of the current galaxy shape (copy so later sim ticks on the
+  // live layout buffer can't mutate what we export).
+  const snapshot: LayoutFrame = {
+    positions: new Float32Array(ctx.layout.positions),
+    version: ctx.layout.version,
+  };
+
+  const accent = ACCENTS[ctx.theme];
+  const clear = CLEARS[ctx.theme];
+  renderer.setAccent(accent[0], accent[1], accent[2]);
+  renderer.setClearColor(clear[0], clear[1], clear[2]);
+  renderer.setDeaths(ctx.deaths);
+  renderer.setWatermark(true);
+
+  // Fix the camera framing to the bounds of the snapshot positions (finite only).
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const p = snapshot.positions;
+  for (let i = 0; i < p.length; i += 2) {
+    const x = p[i];
+    const y = p[i + 1];
+    if (!isFinite(x) || !isFinite(y)) continue;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (isFinite(minX)) {
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const spanX = Math.max(maxX - minX, 1);
+    const spanY = Math.max(maxY - minY, 1);
+    // zoom = device px per world unit; fit with 15% margin on the tighter axis.
+    const zx = (width * 0.85) / spanX;
+    const zy = (height * 0.85) / spanY;
+    renderer.camera.x = cx;
+    renderer.camera.y = cy;
+    renderer.camera.zoom = Math.min(zx, zy);
+  }
+  renderer.camera.mode = "free"; // never auto-drift during export
+
+  const renderFrameAt = (t: number, dt: number): HTMLCanvasElement => {
+    const scene: SceneState = sceneAtTime(ctx.prepared, t);
+    renderer.renderAt(scene, snapshot, ctx.colors, { dt, deterministic: true });
+    return canvas;
+  };
+
+  return {
+    canvas,
+    renderFrameAt,
+    dispose: () => renderer.dispose(),
+  };
 }
 
 export interface GalaxyOptions {
@@ -99,6 +207,10 @@ export function useGalaxy(
   const colorsRef = useRef<Float32Array | null>(null);
   const playbackRef = useRef<PlaybackState | null>(null);
   const fpsValRef = useRef(0);
+  // Latest layout frame + deaths, kept in refs so the export path can snapshot
+  // the galaxy's current shape without reaching into the render loop closure.
+  const layoutRef = useRef<LayoutFrame | null>(null);
+  const deathsRef = useRef<Float64Array | null>(null);
 
   // Keep the latest theme readable inside the long-lived effect.
   const themeRef = useRef(theme);
@@ -142,6 +254,7 @@ export function useGalaxy(
       const d = timeline.stars[i].death;
       deaths[i] = d === null ? NaN : d;
     }
+    deathsRef.current = deaths;
 
     let renderer: Renderer | null = null;
     let worker: Worker | null = null;
@@ -176,10 +289,12 @@ export function useGalaxy(
         type: "module",
       });
       let layout: LayoutFrame = { positions: new Float32Array(n * 2), version: -1 };
+      layoutRef.current = layout;
       worker.onmessage = (e: MessageEvent) => {
         const msg = e.data as { type: string; positions?: Float32Array; version?: number };
         if (msg.type === "frame" && msg.positions) {
           layout = { positions: msg.positions, version: msg.version ?? 0 };
+          layoutRef.current = layout;
         }
       };
       worker.postMessage({
@@ -228,6 +343,7 @@ export function useGalaxy(
 
       const api: GalaxyHandle = {
         timeline,
+        repo: commitTimeline.repo,
         getPlayback: () => playbackRef.current!,
         play: () => {
           playbackRef.current = play(playbackRef.current!);
@@ -241,6 +357,14 @@ export function useGalaxy(
         seek: (t: number) => {
           playbackRef.current = seek(playbackRef.current!, t);
         },
+        createExportRenderer: (width, height) =>
+          buildExportRenderer(width, height, {
+            prepared,
+            colors: colorsRef.current!,
+            deaths: deathsRef.current!,
+            layout: layoutRef.current!,
+            theme: themeRef.current,
+          }),
       };
       setHandle(api);
     } catch (err) {

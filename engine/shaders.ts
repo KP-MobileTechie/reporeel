@@ -185,6 +185,38 @@ void main() {
 `;
 
 /**
+ * Watermark: a single textured quad positioned in clip space by a per-draw
+ * (u_offset, u_scale) transform. The vertex shader expands gl_VertexID 0..3
+ * into a unit quad; the fragment samples an alpha-only RGBA texture (the
+ * pre-rendered "reporeel" wordmark) and applies a global u_alpha. Drawn after
+ * the post composite with standard alpha blending. Export-only.
+ */
+export const WATERMARK_VERT = `#version 300 es
+out vec2 v_uv;
+uniform vec2 u_offset;   // clip-space center offset
+uniform vec2 u_scale;    // clip-space half-extents
+void main() {
+  // gl_VertexID 0..3 -> two triangles via a triangle strip unit quad.
+  vec2 q = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));
+  v_uv = vec2(q.x, 1.0 - q.y); // flip v so texture top maps up
+  vec2 p = (q * 2.0 - 1.0) * u_scale + u_offset;
+  gl_Position = vec4(p, 0.0, 1.0);
+}
+`;
+
+export const WATERMARK_FRAG = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform float u_alpha;
+out vec4 outColor;
+void main() {
+  vec4 c = texture(u_tex, v_uv);
+  outColor = vec4(c.rgb, c.a * u_alpha);
+}
+`;
+
+/**
  * Compiles a vertex+fragment program. Throws an Error carrying the shader /
  * program info log on any failure so the caller can surface a readable message.
  */
