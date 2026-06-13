@@ -59,6 +59,7 @@ function normalizeGitPath(rel: string): string | null {
 async function collectFromDataTransferItem(
   entry: FileSystemEntry,
   out: { path: string; data: Uint8Array }[],
+  counter: { n: number },
 ): Promise<void> {
   if (entry.isFile) {
     const fileEntry = entry as FileSystemFileEntry;
@@ -68,6 +69,7 @@ async function collectFromDataTransferItem(
     if (gp && !shouldSkip(gp)) {
       const buf = await file.arrayBuffer();
       out.push({ path: gp, data: new Uint8Array(buf) });
+      if (++counter.n % 64 === 0) await new Promise<void>((r) => setTimeout(r));
     }
   } else if (entry.isDirectory) {
     const dirEntry = entry as FileSystemDirectoryEntry;
@@ -78,7 +80,7 @@ async function collectFromDataTransferItem(
       batch = await new Promise<FileSystemEntry[]>((res, rej) =>
         reader.readEntries(res, rej),
       );
-      for (const child of batch) await collectFromDataTransferItem(child, out);
+      for (const child of batch) await collectFromDataTransferItem(child, out, counter);
     } while (batch.length > 0);
   }
 }
@@ -88,6 +90,7 @@ async function collectFromHandle(
   dir: FileSystemDirectoryHandle,
   prefix: string,
   out: { path: string; data: Uint8Array }[],
+  counter: { n: number },
 ): Promise<void> {
   const dirEntries = (dir as unknown as {
     entries(): AsyncIterable<[string, FileSystemHandle]>;
@@ -100,9 +103,10 @@ async function collectFromHandle(
         const file = await (handle as FileSystemFileHandle).getFile();
         const buf = await file.arrayBuffer();
         out.push({ path: gp, data: new Uint8Array(buf) });
+        if (++counter.n % 64 === 0) await new Promise<void>((r) => setTimeout(r));
       }
     } else {
-      await collectFromHandle(handle as FileSystemDirectoryHandle, rel, out);
+      await collectFromHandle(handle as FileSystemDirectoryHandle, rel, out, counter);
     }
   }
 }
@@ -130,6 +134,7 @@ export function InputRow({
   const [urlError, setUrlError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [token, setToken] = useState("");
+  const [reading, setReading] = useState(false);
   const dirInputRef = useRef<HTMLInputElement>(null);
 
   const submitGithub = (tok?: string) => {
@@ -151,7 +156,12 @@ export function InputRow({
       try {
         const handle = await picker();
         const out: { path: string; data: Uint8Array }[] = [];
-        await collectFromHandle(handle, handle.name, out);
+        setReading(true);
+        try {
+          await collectFromHandle(handle, handle.name, out, { n: 0 });
+        } finally {
+          setReading(false);
+        }
         if (out.length === 0) {
           setUrlError("No .git directory found in that folder.");
           return;
@@ -174,16 +184,23 @@ export function InputRow({
     if (!fileList || fileList.length === 0) return;
     const out: { path: string; data: Uint8Array }[] = [];
     let repoName = "repository";
-    for (const f of Array.from(fileList)) {
-      // webkitRelativePath: "repoName/.git/HEAD"
-      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
-      const top = rel.split("/")[0];
-      if (top) repoName = top;
-      const gp = normalizeGitPath(rel);
-      if (gp && !shouldSkip(gp)) {
-        const buf = await f.arrayBuffer();
-        out.push({ path: gp, data: new Uint8Array(buf) });
+    setReading(true);
+    try {
+      let count = 0;
+      for (const f of Array.from(fileList)) {
+        // webkitRelativePath: "repoName/.git/HEAD"
+        const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+        const top = rel.split("/")[0];
+        if (top) repoName = top;
+        const gp = normalizeGitPath(rel);
+        if (gp && !shouldSkip(gp)) {
+          const buf = await f.arrayBuffer();
+          out.push({ path: gp, data: new Uint8Array(buf) });
+          if (++count % 64 === 0) await new Promise<void>((r) => setTimeout(r));
+        }
       }
+    } finally {
+      setReading(false);
     }
     if (out.length === 0) {
       setUrlError("That folder has no .git directory.");
@@ -199,12 +216,18 @@ export function InputRow({
     const items = Array.from(e.dataTransfer.items);
     const out: { path: string; data: Uint8Array }[] = [];
     let repoName = "repository";
-    for (const item of items) {
-      const entry = item.webkitGetAsEntry?.();
-      if (entry) {
-        if (entry.isDirectory) repoName = entry.name;
-        await collectFromDataTransferItem(entry, out);
+    setReading(true);
+    try {
+      const counter = { n: 0 };
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) {
+          if (entry.isDirectory) repoName = entry.name;
+          await collectFromDataTransferItem(entry, out, counter);
+        }
       }
+    } finally {
+      setReading(false);
     }
     if (out.length === 0) {
       setUrlError("Drop a folder that contains a .git directory.");
@@ -213,6 +236,8 @@ export function InputRow({
     onLocal({ repoName, files: out });
   };
 
+  const isDisabled = busy || reading;
+
   return (
     <div className="w-full max-w-2xl">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
@@ -220,10 +245,10 @@ export function InputRow({
         <div
           onDragOver={(e) => {
             e.preventDefault();
-            setDragOver(true);
+            if (!isDisabled) setDragOver(true);
           }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={onDrop}
+          onDrop={isDisabled ? (e) => e.preventDefault() : onDrop}
           className={`flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed px-4 py-5 text-center transition ${
             dragOver ? "border-accent bg-accent/10" : "border-border bg-surface/60"
           }`}
@@ -231,10 +256,10 @@ export function InputRow({
           <button
             type="button"
             onClick={pickDirectory}
-            disabled={busy}
+            disabled={isDisabled}
             className="text-sm font-medium text-fg hover:text-accent disabled:opacity-40"
           >
-            Drop a repo folder or click to choose
+            {reading ? "reading repository…" : "Drop a repo folder or click to choose"}
           </button>
           <span className="mt-1 text-[11px] text-fg-dim">
             code never leaves your browser
@@ -263,7 +288,7 @@ export function InputRow({
             <input
               type="text"
               value={url}
-              disabled={busy}
+              disabled={isDisabled}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="github.com/owner/repo"
               aria-label="GitHub repository URL"
@@ -271,7 +296,7 @@ export function InputRow({
             />
             <button
               type="submit"
-              disabled={busy}
+              disabled={isDisabled}
               className="shrink-0 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-40"
             >
               Watch
@@ -281,7 +306,7 @@ export function InputRow({
           {/* (3) Demo dropdown */}
           <select
             defaultValue=""
-            disabled={busy}
+            disabled={isDisabled}
             aria-label="Load a demo repository"
             onChange={(e) => {
               if (e.target.value) onDemo(e.target.value);

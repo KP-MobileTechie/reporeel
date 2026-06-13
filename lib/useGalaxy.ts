@@ -22,7 +22,7 @@
 // a small subscription so React overlays can throttle their own updates.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Renderer, WebGLUnsupportedError } from "@/engine/renderer";
 import { buildTimeline } from "@/lib/timeline/build";
 import { prepare, sceneAtTime } from "@/lib/timeline/scene";
@@ -283,9 +283,6 @@ export function useGalaxy(
     const id = window.setInterval(() => setFps(fpsValRef.current), 250);
     return () => window.clearInterval(id);
   }, []);
-
-  const noop = useCallback(() => {}, []);
-  void noop;
 
   return { handle, error, fps };
 }

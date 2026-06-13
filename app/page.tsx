@@ -226,6 +226,7 @@ export default function Home() {
       {state === "landing" && !webglUnsupported && (
         <LandingHero
           demos={demos}
+          busy={false}
           rateLimit={rateLimit}
           onLocal={loadLocal}
           onGithub={loadGithub}

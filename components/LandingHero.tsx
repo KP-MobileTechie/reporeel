@@ -4,6 +4,7 @@ import { InputRow, type DemoEntry, type LocalFiles } from "./InputRow";
 
 export function LandingHero({
   demos,
+  busy,
   rateLimit,
   onLocal,
   onGithub,
@@ -11,6 +12,7 @@ export function LandingHero({
   onContinuePartial,
 }: {
   demos: DemoEntry[];
+  busy?: boolean;
   rateLimit?: { commitsLoaded: number } | null;
   onLocal: (files: LocalFiles) => void;
   onGithub: (owner: string, repo: string, token?: string) => void;
@@ -34,6 +36,7 @@ export function LandingHero({
         <div className="mt-8 flex w-full justify-center">
           <InputRow
             demos={demos}
+            busy={busy}
             rateLimit={rateLimit}
             onLocal={onLocal}
             onGithub={onGithub}
