@@ -4,7 +4,7 @@
 
 Turn any git repo's history into a cinematic "code galaxy" movie you can scrub and export as video, rendered entirely in your browser with a hand-written WebGL2 engine.
 
-> Live demo: https://reporeel.vercel.app
+> Live demo: https://reporeel-fawn.vercel.app
 
 <!-- demo gif: owner to record -->
 

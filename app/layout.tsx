@@ -7,8 +7,8 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
-const SITE_URL = "https://reporeel.vercel.app";
-const TITLE = "RepoReel — watch your codebase being born";
+const SITE_URL = "https://reporeel-fawn.vercel.app";
+const TITLE = "RepoReel: watch your codebase being born";
 const DESCRIPTION =
   "Turn any git history into a cinematic galaxy: every file a star, every commit a supernova, every author a comet. 100% in your browser, nothing uploaded.";
 
