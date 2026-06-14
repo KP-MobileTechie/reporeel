@@ -78,7 +78,40 @@ async function handleParse(req: ParseRequest): Promise<void> {
     post({ type: "progress", done: i + 1, total });
   }
 
-  post({ type: "done", entries, skippedInWalk });
+  // Read current (HEAD) source-file contents for the dependency graph. This is
+  // strictly additive and fully isolated: any failure leaves `contents`
+  // undefined and never affects the commit history above.
+  let contents: { path: string; content: string }[] | undefined;
+  try {
+    contents = await readHeadContents(fs);
+  } catch {
+    contents = undefined;
+  }
+
+  post({ type: "done", entries, skippedInWalk, contents });
+}
+
+// Pull the text of HEAD source files (capped) for the dependency graph.
+const SOURCE_RE = /\.(ts|tsx|js|jsx|mjs|cjs)$/i;
+const MAX_SRC_FILES = 2000;
+const MAX_SRC_BYTES = 256 * 1024;
+
+async function readHeadContents(fs: MemFs): Promise<{ path: string; content: string }[]> {
+  const headOid = await git.resolveRef({ fs: fs as never, dir: "/", ref: "HEAD" });
+  const all: string[] = await git.listFiles({ fs: fs as never, dir: "/", ref: "HEAD" });
+  const sources = all.filter((p) => SOURCE_RE.test(p)).slice(0, MAX_SRC_FILES);
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  const out: { path: string; content: string }[] = [];
+  for (const filepath of sources) {
+    try {
+      const { blob } = await git.readBlob({ fs: fs as never, dir: "/", oid: headOid, filepath });
+      if (blob.byteLength > MAX_SRC_BYTES) continue;
+      out.push({ path: filepath, content: decoder.decode(blob) });
+    } catch {
+      /* skip unreadable file */
+    }
+  }
+  return out;
 }
 
 function post(msg: WorkerMessage): void {

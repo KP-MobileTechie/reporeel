@@ -94,6 +94,12 @@ export interface GalaxyHandle {
    * call .dispose() when done.
    */
   createExportRenderer(width: number, height: number): ExportFrameRenderer | null;
+  /**
+   * Hit-test a client (CSS-pixel) point against the galaxy and return the
+   * nearest VISIBLE star at the current playback time, or null if none is close
+   * enough. Used to let a click in the galaxy open that file's details.
+   */
+  pickAt(clientX: number, clientY: number): { id: number; path: string; lang: string } | null;
 }
 
 /**
@@ -365,6 +371,46 @@ export function useGalaxy(
             layout: layoutRef.current!,
             theme: themeRef.current,
           }),
+        pickAt: (clientX, clientY) => {
+          const cv = canvasRef.current;
+          const rnd = rendererRef.current;
+          const lay = layoutRef.current;
+          const pb = playbackRef.current;
+          if (!cv || !rnd || !lay || !pb) return null;
+          const rect = cv.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return null;
+          // Device pixels actually backing each CSS pixel (robust to DPR).
+          const dpr = cv.width / rect.width;
+          const dx = (clientX - rect.left) * dpr;
+          const dy = (clientY - rect.top) * dpr;
+          const [wx, wy] = rnd.camera.screenToWorld(dx, dy, cv.width, cv.height);
+          const scene = sceneAtTime(prepared, pb.t);
+          const sizes = scene.sizes;
+          const pos = lay.positions;
+          const stars = timeline.stars;
+          const z = rnd.camera.zoom;
+          let bestId = -1;
+          let bestDevice = Infinity;
+          let bestSize = 4;
+          for (let i = 0; i < stars.length; i++) {
+            const s = sizes[i];
+            if (!(s > 0)) continue; // only stars visible at this moment
+            const x = pos[i * 2];
+            const y = pos[i * 2 + 1];
+            if (!isFinite(x) || !isFinite(y)) continue;
+            const dist = Math.hypot((x - wx) * z, (y - wy) * z); // device px
+            if (dist < bestDevice) {
+              bestDevice = dist;
+              bestId = i;
+              bestSize = s;
+            }
+          }
+          if (bestId < 0) return null;
+          // Accept if within the star's drawn radius plus a small finger-friendly pad.
+          if (bestDevice > Math.max(18, bestSize / 2 + 10)) return null;
+          const st = stars[bestId];
+          return { id: bestId, path: st.path, lang: st.lang };
+        },
       };
       setHandle(api);
     } catch (err) {

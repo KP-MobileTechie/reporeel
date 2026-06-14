@@ -46,8 +46,10 @@ export function LandingHero({
         </h1>
 
         <p className="mt-5 text-base text-fg-dim sm:text-lg">
-          Any repo. 100% in your browser. Nothing uploaded.
+          A cinematic galaxy <span className="text-fg">and</span> an AI guide that explains the whole codebase:
+          what it is, what each file does, who built it, how healthy it is.
         </p>
+        <p className="mt-2 text-sm text-fg-dim/80">100% in your browser. Nothing uploaded.</p>
 
         <div className="mt-10 flex w-full justify-center">
           <InputRow

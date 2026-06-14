@@ -34,6 +34,8 @@ export interface DoneMessage {
   type: "done";
   entries: LocalLogEntry[];
   skippedInWalk: number;
+  /** HEAD source-file contents for the dependency graph (best-effort). */
+  contents?: { path: string; content: string }[];
 }
 export interface ErrorMessage {
   type: "error";
@@ -93,7 +95,7 @@ export function parseLocalRepo(
   files: { path: string; data: Uint8Array }[],
   repoName: string,
   onProgress: (done: number, total: number) => void,
-  onDone: (result: { timeline: CommitTimeline; skipped: number }) => void,
+  onDone: (result: { timeline: CommitTimeline; skipped: number; contents?: { path: string; content: string }[] }) => void,
   onError: (err: Error) => void,
 ): () => void {
   let worker: Worker;
@@ -113,7 +115,7 @@ export function parseLocalRepo(
       case "done": {
         const result = normalizeLocal(msg.entries, repoName);
         result.skipped = msg.skippedInWalk;
-        onDone(result);
+        onDone({ ...result, contents: msg.contents });
         worker.terminate();
         break;
       }

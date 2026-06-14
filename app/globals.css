@@ -75,6 +75,18 @@ body {
   box-shadow: 0 0 8px var(--accent);
 }
 
+/* Narration caption entrance (mirrored by the exported video overlay). */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

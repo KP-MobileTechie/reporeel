@@ -21,6 +21,9 @@ import {
   exportMediaRecorder,
   type ExportOpts,
 } from "@/lib/export/recorder";
+import { drawOverlay } from "@/lib/export/overlay";
+import { activeBeat } from "@/lib/insights/narration";
+import type { ProjectBrief } from "@/lib/insights/types";
 
 const DURATIONS = [30, 60, 90] as const;
 interface Resolution {
@@ -39,15 +42,20 @@ export function ExportModal({
   handle,
   repoName,
   demoId,
+  brief,
+  captionsOn,
   onClose,
 }: {
   handle: GalaxyHandle;
   repoName: string;
   demoId: string | null;
+  brief: ProjectBrief | null;
+  captionsOn: boolean;
   onClose: () => void;
 }) {
   const [durationS, setDurationS] = useState<number>(30);
   const [res, setRes] = useState<Resolution>(RESOLUTIONS[0]);
+  const [burnCaptions, setBurnCaptions] = useState<boolean>(captionsOn);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -168,6 +176,37 @@ export function ExportModal({
       return;
     }
 
+    // When narration burn-in is on, composite each GL frame onto a reused 2D
+    // canvas and paint the coordinator's title card + active caption over it.
+    // The recorder reads back whatever canvas we return, so text reaches the
+    // MP4/WebM (DOM overlays never would). The same canvas instance is reused
+    // so the MediaRecorder fallback's captureStream stays valid across frames.
+    const burn = !!brief && burnCaptions;
+    let renderFrameAt = exportRenderer.renderFrameAt;
+    if (burn && brief) {
+      const comp = document.createElement("canvas");
+      comp.width = res.w;
+      comp.height = res.h;
+      const cctx = comp.getContext("2d");
+      const span = Math.max(1, timeline.t1 - timeline.t0);
+      if (cctx) {
+        renderFrameAt = (t: number, dt: number) => {
+          const gl = exportRenderer.renderFrameAt(t, dt);
+          cctx.clearRect(0, 0, comp.width, comp.height);
+          cctx.drawImage(gl, 0, 0, comp.width, comp.height);
+          drawOverlay(cctx, {
+            width: comp.width,
+            height: comp.height,
+            beat: activeBeat(brief.narration, t),
+            title: brief.name,
+            headline: brief.headline,
+            progress: (t - timeline.t0) / span,
+          });
+          return comp;
+        };
+      }
+    }
+
     const opts: ExportOpts = {
       t0: timeline.t0,
       t1: timeline.t1,
@@ -176,7 +215,7 @@ export function ExportModal({
       width: res.w,
       height: res.h,
       repoName,
-      renderFrameAt: exportRenderer.renderFrameAt,
+      renderFrameAt,
       onProgress: setProgress,
       shouldAbort: () => abortRef.current,
     };
@@ -270,6 +309,25 @@ export function ExportModal({
             ))}
           </div>
         </fieldset>
+
+        {/* AI Coordinator narration burn-in */}
+        {brief && (
+          <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border p-3 text-sm">
+            <input
+              type="checkbox"
+              checked={burnCaptions}
+              disabled={exporting}
+              onChange={(e) => setBurnCaptions(e.target.checked)}
+              className="mt-0.5 accent-[var(--accent)]"
+            />
+            <span>
+              <span className="text-fg">Narrate the video</span>
+              <span className="mt-0.5 block text-xs text-fg-dim">
+                Burn in the AI Coordinator&apos;s title card and chapter captions.
+              </span>
+            </span>
+          </label>
+        )}
 
         {/* Encoder availability note */}
         {encoder === "mediarecorder" && (

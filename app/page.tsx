@@ -7,8 +7,14 @@ import { StatsOverlay, type Stats } from "@/components/StatsOverlay";
 import { Leaderboard, type LeaderRow } from "@/components/Leaderboard";
 import { ThemePicker } from "@/components/ThemePicker";
 import { ExportModal } from "@/components/ExportModal";
+import { CoordinatorPanel } from "@/components/CoordinatorPanel";
+import { NarrationCaption } from "@/components/NarrationCaption";
+import { FileCard } from "@/components/FileCard";
 import type { DemoEntry, LocalFiles } from "@/components/InputRow";
 import { useGalaxy } from "@/lib/useGalaxy";
+import { useProjectBrief } from "@/lib/useProjectBrief";
+import { buildDepGraph } from "@/lib/insights/depGraph";
+import { activeBeat } from "@/lib/insights/narration";
 import { loadDemo } from "@/lib/git/demo";
 import { fetchGithubTimeline } from "@/lib/git/github";
 import { parseLocalRepo } from "@/lib/git/local";
@@ -43,6 +49,13 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cancelLocalRef = useRef<(() => void) | null>(null);
+
+  // Galaxy click-to-inspect: track the pointer-down point to tell a tap (pick a
+  // star) from a drag (pan), and hold the currently inspected file.
+  const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
+  const [selectedFile, setSelectedFile] = useState<{ path: string; x: number; y: number } | null>(null);
+  // HEAD source contents for the dependency graph (local mode only).
+  const [fileContents, setFileContents] = useState<Map<string, string> | null>(null);
 
   // Sample demo timeline drives the landing-page background galaxy.
   const [sampleTimeline, setSampleTimeline] = useState<CommitTimeline | null>(null);
@@ -107,6 +120,7 @@ export default function Home() {
       const ac = new AbortController();
       abortRef.current = ac;
       setDemoId(null);
+      setFileContents(null);
       setRateLimit(null);
       setProgress({ source: "github", done: 0, total: 0 });
       setState("loading");
@@ -146,8 +160,9 @@ export default function Home() {
         lf.files,
         lf.repoName,
         (done, total) => setProgress({ source: "local", done, total }),
-        ({ timeline: ct }) => {
+        ({ timeline: ct, contents }) => {
           cancelLocalRef.current = null;
+          setFileContents(contents && contents.length ? new Map(contents.map((c) => [c.path, c.content])) : null);
           enterTheater(ct);
         },
         (err) => {
@@ -165,6 +180,7 @@ export default function Home() {
       const entry = demos.find((d) => d.id === id);
       if (!entry) return;
       setDemoId(id);
+      setFileContents(null);
       setState("loading");
       setProgress({ source: "local", done: 0, total: 0 });
       try {
@@ -187,6 +203,8 @@ export default function Home() {
     setErrorMsg("");
     setWebglUnsupported(false);
     setProgress(null);
+    setSelectedFile(null);
+    setFileContents(null);
     setState("landing");
   }, []);
 
@@ -228,7 +246,22 @@ export default function Home() {
 
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-bg">
-      <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full touch-none" />
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 block h-full w-full touch-none"
+        onPointerDown={(e) => {
+          pointerDownRef.current = { x: e.clientX, y: e.clientY };
+        }}
+        onPointerUp={(e) => {
+          const down = pointerDownRef.current;
+          pointerDownRef.current = null;
+          if (!down || !isTheater || !handle) return;
+          // A drag (pan) is not a pick.
+          if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
+          const hit = handle.pickAt(e.clientX, e.clientY);
+          setSelectedFile(hit ? { path: hit.path, x: e.clientX, y: e.clientY } : null);
+        }}
+      />
 
       {state === "landing" && !webglUnsupported && (
         <LandingHero
@@ -247,11 +280,15 @@ export default function Home() {
       {state === "theater" && handle && (
         <Theater
           handle={handle}
+          commitTimeline={timeline}
           repoName={timeline?.repo.name ?? "repository"}
           demoId={demoId}
           theme={theme}
           onTheme={setTheme}
           onExit={reset}
+          selectedFile={selectedFile}
+          onCloseFile={() => setSelectedFile(null)}
+          fileContents={fileContents}
         />
       )}
 
@@ -324,22 +361,46 @@ function ErrorView({ message, onRetry }: { message: string; onRetry: () => void 
 // ---------------------------------------------------------------------------
 function Theater({
   handle,
+  commitTimeline,
   repoName,
   demoId,
   theme,
   onTheme,
   onExit,
+  selectedFile,
+  onCloseFile,
+  fileContents,
 }: {
   handle: NonNullable<ReturnType<typeof useGalaxy>["handle"]>;
+  commitTimeline: CommitTimeline | null;
   repoName: string;
   demoId: string | null;
   theme: Theme;
   onTheme: (t: Theme) => void;
   onExit: () => void;
+  selectedFile: { path: string; x: number; y: number } | null;
+  onCloseFile: () => void;
+  fileContents: Map<string, string> | null;
 }) {
   const [exportOpen, setExportOpen] = useState(false);
+  // A ?guide=<tab> deep link opens the Coordinator straight away.
+  const [coordinatorOpen, setCoordinatorOpen] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("guide"),
+  );
+  const [captionsOn, setCaptionsOn] = useState(true);
+  const [voiceOn, setVoiceOn] = useState(false);
   const { timeline } = handle;
   const degenerate = timeline.t1 <= timeline.t0;
+
+  // The AI Coordinator brief — computed off the main thread (with a synchronous
+  // fallback) so a large repo never janks the galaxy.
+  const { brief, loading: briefLoading } = useProjectBrief(commitTimeline);
+
+  // Real dependency graph (local mode only, when HEAD contents are available).
+  const depGraph = useMemo(
+    () => (fileContents && fileContents.size ? buildDepGraph(fileContents) : null),
+    [fileContents],
+  );
 
   // Precompute commit times (sorted) for sparkline + binary-search counts.
   const commitTimes = useMemo(
@@ -367,6 +428,33 @@ function Theater({
   const [t, setT] = useState(timeline.t0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
+
+  // Live voiceover: speak the active narration beat as the timeline reaches it,
+  // using the browser's built-in speech synthesis (client-side, free).
+  const lastSpokenRef = useRef<number>(-1);
+  useEffect(() => {
+    if (!voiceOn || !brief) return;
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    if (!synth) return;
+    const beat = activeBeat(brief.narration, t);
+    if (!beat || beat.t === lastSpokenRef.current) return;
+    lastSpokenRef.current = beat.t;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(beat.text);
+    u.rate = 1;
+    synth.speak(u);
+  }, [t, voiceOn, brief]);
+
+  // Stop speech when voiceover is turned off or the theater unmounts.
+  useEffect(() => {
+    if (voiceOn) return;
+    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+  }, [voiceOn]);
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    };
+  }, []);
   const [stats, setStats] = useState<Stats>({
     repoName,
     aliveCount: 0,
@@ -457,6 +545,8 @@ function Theater({
       } else if (e.key === "-" || e.key === "_") {
         const i = SPEED_STEPS.findIndex((s) => s >= pb.speed);
         handle.setSpeed(SPEED_STEPS[Math.max(0, i - 1)]);
+      } else if (e.key === "g" || e.key === "G") {
+        setCoordinatorOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -475,6 +565,24 @@ function Theater({
         <ThemePicker theme={theme} onChange={onTheme} />
         <Leaderboard rows={leaders} />
         <div className="flex gap-2">
+          {brief ? (
+            <button
+              type="button"
+              onClick={() => setCoordinatorOpen((v) => !v)}
+              aria-pressed={coordinatorOpen}
+              className={`pointer-events-auto rounded-lg px-3 py-1.5 text-xs backdrop-blur transition ${
+                coordinatorOpen
+                  ? "bg-accent/20 text-fg"
+                  : "bg-black/40 text-fg-dim hover:text-fg"
+              }`}
+            >
+              ✦ Coordinator
+            </button>
+          ) : briefLoading ? (
+            <span className="pointer-events-none rounded-lg bg-black/40 px-3 py-1.5 text-xs text-fg-dim backdrop-blur">
+              ✦ Analyzing…
+            </span>
+          ) : null}
           <button
             type="button"
             onClick={() => setExportOpen(true)}
@@ -492,17 +600,67 @@ function Theater({
         </div>
       </div>
 
+      {brief && (
+        <CoordinatorPanel
+          brief={brief}
+          commitTimeline={commitTimeline}
+          depGraph={depGraph}
+          open={coordinatorOpen}
+          onClose={() => setCoordinatorOpen(false)}
+          onSeek={(target) => {
+            setT(target);
+            handle.seek(target);
+          }}
+        />
+      )}
+
+      {brief && selectedFile && (
+        <FileCard brief={brief} path={selectedFile.path} x={selectedFile.x} y={selectedFile.y} onClose={onCloseFile} />
+      )}
+
       {exportOpen && (
         <ExportModal
           handle={handle}
           repoName={repoName}
           demoId={demoId}
+          brief={brief}
+          captionsOn={captionsOn}
           onClose={() => setExportOpen(false)}
         />
       )}
 
+      {/* Live narration caption (mirrors the exported video overlay) */}
+      {brief && brief.narration.length > 0 && (
+        <div className="absolute inset-x-0 bottom-24 z-10">
+          <NarrationCaption beats={brief.narration} t={t} visible={captionsOn && !coordinatorOpen} />
+        </div>
+      )}
+
       {/* Bottom timeline */}
       <div className="absolute inset-x-4 bottom-4 z-10">
+        {brief && brief.narration.length > 0 && (
+          <div className="mb-2 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setVoiceOn((v) => !v)}
+              aria-pressed={voiceOn}
+              className={`pointer-events-auto rounded-lg px-2.5 py-1 text-[11px] backdrop-blur transition ${
+                voiceOn ? "bg-accent/20 text-fg" : "bg-black/40 text-fg-dim hover:text-fg"
+              }`}
+              title="Read the narration aloud as the timeline plays"
+            >
+              {voiceOn ? "🔊 Voiceover on" : "🔇 Voiceover"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCaptionsOn((v) => !v)}
+              aria-pressed={captionsOn}
+              className="pointer-events-auto rounded-lg bg-black/40 px-2.5 py-1 text-[11px] text-fg-dim backdrop-blur hover:text-fg"
+            >
+              {captionsOn ? "Hide narration" : "Show narration"}
+            </button>
+          </div>
+        )}
         <TimelineBar
           t0={timeline.t0}
           t1={timeline.t1}

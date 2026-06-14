@@ -1,0 +1,42 @@
+# Regenerate ONBOARDING.md from git history with RepoReel's insight engine.
+# Drop this into any repo (it needs the generator script + deps, or run it from
+# a checkout of RepoReel). Runs on release and on demand; commits the refreshed
+# guide only when it changed. Zero backend — it all runs in CI.
+name: Onboarding
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  onboarding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the analysis is complete
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Generate ONBOARDING.md
+        run: node scripts/generate-onboarding.mjs . ONBOARDING.md
+
+      - name: Commit if changed
+        run: |
+          if ! git diff --quiet -- ONBOARDING.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add ONBOARDING.md
+            git commit -m "docs: refresh ONBOARDING.md [skip ci]"
+            git push
+          else
+            echo "ONBOARDING.md is already up to date."
+          fi
